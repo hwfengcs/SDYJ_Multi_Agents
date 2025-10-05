@@ -129,7 +129,8 @@ class ResearchWorkflow:
         self,
         query: str,
         max_iterations: Optional[int] = None,
-        auto_approve: bool = False
+        auto_approve: bool = False,
+        output_format: str = "markdown"
     ) -> dict:
         """
         Run the research workflow.
@@ -138,12 +139,13 @@ class ResearchWorkflow:
             query: Research query
             max_iterations: Maximum number of research iterations
             auto_approve: Whether to auto-approve the research plan
+            output_format: Output format for the final report ("markdown" or "html")
 
         Returns:
             Final research state
         """
         # Initialize state
-        initial_state = self.coordinator.initialize_research(query, auto_approve=auto_approve)
+        initial_state = self.coordinator.initialize_research(query, auto_approve=auto_approve, output_format=output_format)
 
         if max_iterations:
             initial_state['max_iterations'] = max_iterations
@@ -158,7 +160,8 @@ class ResearchWorkflow:
         self,
         query: str,
         max_iterations: Optional[int] = None,
-        auto_approve: bool = False
+        auto_approve: bool = False,
+        output_format: str = "markdown"
     ):
         """
         Stream the research workflow execution.
@@ -167,12 +170,13 @@ class ResearchWorkflow:
             query: Research query
             max_iterations: Maximum number of research iterations
             auto_approve: Whether to auto-approve the research plan
+            output_format: Output format for the final report ("markdown" or "html")
 
         Yields:
             State updates during execution
         """
         # Initialize state
-        initial_state = self.coordinator.initialize_research(query, auto_approve=auto_approve)
+        initial_state = self.coordinator.initialize_research(query, auto_approve=auto_approve, output_format=output_format)
 
         if max_iterations:
             initial_state['max_iterations'] = max_iterations
@@ -187,7 +191,8 @@ class ResearchWorkflow:
         query: str,
         max_iterations: Optional[int] = None,
         auto_approve: bool = False,
-        human_approval_callback = None
+        human_approval_callback = None,
+        output_format: str = "markdown"
     ):
         """
         Stream the research workflow execution with interactive human approval.
@@ -198,12 +203,13 @@ class ResearchWorkflow:
             auto_approve: Whether to auto-approve the research plan
             human_approval_callback: Callback function for human approval
                                    Should return (approved: bool, feedback: str)
+            output_format: Output format for the final report ("markdown" or "html")
 
         Yields:
             State updates during execution
         """
         # Initialize state
-        initial_state = self.coordinator.initialize_research(query, auto_approve=auto_approve)
+        initial_state = self.coordinator.initialize_research(query, auto_approve=auto_approve, output_format=output_format)
 
         if max_iterations:
             initial_state['max_iterations'] = max_iterations

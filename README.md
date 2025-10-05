@@ -18,10 +18,11 @@
 ## ✨ 能做什么？
 
 ✅ **零基础也能用**：只需要一行命令就能开始
-✅ **多种 AI 模型**：支持 GPT-4、Claude、Gemini、DeepSeek 等
+✅ **多种 AI 模型**：支持 GPT、Claude、Gemini、DeepSeek 等
 ✅ **全网搜索**：自动搜索网页、学术论文等多个来源
-✅ **人工审核**：研究计划会先让你确认，不满意可以修改
-✅ **自动生成报告**：输出漂亮的 Markdown 格式研究报告
+✅ **人工审核**：研究计划会先让你确认,不满意可以修改
+✅ **多种报告格式**：支持 Markdown 和 HTML 两种输出格式
+✅ **自动生成报告**：输出漂亮的专业研究报告
 ✅ **实时进度**：看着 AI 一步步完成研究
 
 ## 🎬 使用场景
@@ -58,7 +59,7 @@
 │  报告员     │
 └──────┬──────┘
        ↓
-  Markdown 报告
+ Markdown/HTML 报告
 ```
 
 ## 🚀 快速开始（3分钟上手）
@@ -131,6 +132,11 @@ python main.py research \
   --output 我的报告.md \
   "分析人工智能的发展趋势"
 
+# 生成 HTML 格式报告
+python main.py research \
+  --output-format html \
+  "量子计算的应用前景"
+
 # 跳过人工审核，全自动运行
 python main.py research --auto-approve "区块链技术应用场景"
 ```
@@ -167,7 +173,11 @@ python main.py research --auto-approve "区块链技术应用场景"
 <details>
 <summary><b>Q: 报告会保存在哪里？</b></summary>
 
-默认保存在 `outputs/` 文件夹，文件名格式：`research_report_日期时间.md`
+默认保存在 `outputs/` 文件夹：
+- Markdown 格式：`research_report_日期时间.md`
+- HTML 格式：`research_report_日期时间.html`
+
+可通过 `--output-format` 参数选择格式，或在交互式菜单中配置。
 </details>
 
 <details>
@@ -187,6 +197,18 @@ python main.py research --auto-approve "区块链技术应用场景"
 
 方法1：修改 `.env` 文件中的 `LLM_PROVIDER` 和对应的 API 密钥
 方法2：运行时使用参数 `--llm-provider openai --llm-model gpt-4`
+</details>
+
+<details>
+<summary><b>Q: Markdown 和 HTML 格式有什么区别？</b></summary>
+
+- **Markdown (.md)**：纯文本格式，适合版本控制、文档编辑，可用 Typora、VS Code 等工具打开
+- **HTML (.html)**：网页格式，包含精美样式，可直接用浏览器打开，适合分享和演示
+
+选择格式的方式：
+1. 命令行参数：`--output-format html` 或 `--output-format markdown`
+2. 交互式菜单：选择"配置设置" → 输出格式
+3. 配置文件：在 `config.json` 中设置 `"output_format": "html"`
 </details>
 
 ## 🎯 工作原理
@@ -227,6 +249,7 @@ MCP_SERVER_URL=http://...      # MCP 服务器（可选）
 MAX_ITERATIONS=5               # 最大搜索轮数
 AUTO_APPROVE_PLAN=false        # 是否自动批准计划
 OUTPUT_DIR=./outputs           # 报告保存位置
+OUTPUT_FORMAT=markdown         # 报告格式（markdown 或 html）
 ```
 </details>
 

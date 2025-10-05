@@ -78,13 +78,14 @@ class Coordinator:
         response = self.llm.generate(prompt).strip()
         return response
 
-    def initialize_research(self, user_query: str, auto_approve: bool = False) -> Dict[str, Any]:
+    def initialize_research(self, user_query: str, auto_approve: bool = False, output_format: str = "markdown") -> Dict[str, Any]:
         """
         Initialize a new research task.
 
         Args:
             user_query: User's research question/request
             auto_approve: Whether to auto-approve the research plan
+            output_format: Output format for the final report ("markdown" or "html")
 
         Returns:
             Initialized research state
@@ -107,7 +108,8 @@ class Coordinator:
             'needs_more_research': True,
             'user_feedback': None,
             'auto_approve_plan': auto_approve,  # Add auto_approve flag to state
-            'simple_response': None  # For storing direct responses to simple queries
+            'simple_response': None,  # For storing direct responses to simple queries
+            'output_format': output_format  # Add output format to state
         }
 
         # Handle simple queries directly

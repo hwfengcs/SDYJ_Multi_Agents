@@ -42,6 +42,7 @@ class CLIConfig:
     auto_approve: bool = False
     output_dir: str = "./outputs"
     show_steps: bool = False
+    output_format: str = "markdown"  # "markdown" or "html"
 
 
 # 配置文件路径
@@ -69,6 +70,7 @@ def save_config_to_file(config: CLIConfig) -> None:
             "auto_approve": config.auto_approve,
             "output_dir": config.output_dir,
             "show_steps": config.show_steps,
+            "output_format": config.output_format,
         }
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config_data, f, indent=2, ensure_ascii=False)
@@ -154,6 +156,7 @@ def configure_settings(config: CLIConfig) -> None:
     console.print(f"  最大迭代次数：[yellow]{config.max_iterations}[/yellow]")
     console.print(f"  自动批准计划：[yellow]{'是' if config.auto_approve else '否'}[/yellow]")
     console.print(f"  输出目录：[yellow]{config.output_dir}[/yellow]")
+    console.print(f"  输出格式：[yellow]{config.output_format.upper()}[/yellow]")
     console.print(f"  显示步骤：[yellow]{'是' if config.show_steps else '否'}[/yellow]")
     console.print()
 
@@ -225,6 +228,18 @@ def configure_settings(config: CLIConfig) -> None:
         config.output_dir = output_dir_input
         config_changed = True
         console.print(f"[green]✓ 已更新输出目录为 {output_dir_input}[/green]")
+
+    # 修改输出格式
+    output_format_input = input(f"输出格式 (markdown/html) [{config.output_format}]: ").strip().lower()
+    if output_format_input in ['markdown', 'md', 'html']:
+        # 规范化格式名称
+        normalized_format = 'markdown' if output_format_input in ['markdown', 'md'] else 'html'
+        if normalized_format != config.output_format:
+            config.output_format = normalized_format
+            config_changed = True
+            console.print(f"[green]✓ 已更新输出格式为 {normalized_format.upper()}[/green]")
+    elif output_format_input:
+        console.print("[red]✗ 无效的输出格式，请选择 markdown 或 html[/red]")
 
     # 修改显示步骤
     show_steps_input = input(f"显示步骤 (y/n) [{'y' if config.show_steps else 'n'}]: ").strip().lower()
@@ -365,7 +380,8 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
             query,
             config.max_iterations,
             auto_approve=config.auto_approve,
-            human_approval_callback=human_approval_callback if not config.auto_approve else None
+            human_approval_callback=human_approval_callback if not config.auto_approve else None,
+            output_format=config.output_format
         )
 
         for state_update in stream_iter:
@@ -443,7 +459,10 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             output_dir = Path(config.output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
-            output_path = output_dir / f"research_report_{timestamp}.md"
+
+            # Determine file extension based on output format
+            file_extension = 'html' if current_state.get('output_format') == 'html' else 'md'
+            output_path = output_dir / f"research_report_{timestamp}.{file_extension}"
 
             rapporteur.save_report(report, str(output_path))
             console.print(f"\n[green]✓ 报告已保存至：{output_path}[/green]")
@@ -509,6 +528,7 @@ def interactive_mode(config: CLIConfig) -> int:
                     console.print(f"  最大迭代次数：[yellow]{config.max_iterations}[/yellow]")
                     console.print(f"  自动批准：[yellow]{'是' if config.auto_approve else '否'}[/yellow]")
                     console.print(f"  输出目录：[yellow]{config.output_dir}[/yellow]")
+                    console.print(f"  输出格式：[yellow]{config.output_format.upper()}[/yellow]")
                     console.print(f"  显示步骤：[yellow]{'是' if config.show_steps else '否'}[/yellow]")
                     console.print()
                     print_separator("-")
@@ -587,6 +607,12 @@ def parse_args(argv: Any) -> argparse.Namespace:
         help="报告输出目录（默认：./outputs）"
     )
     parser.add_argument(
+        "--output-format",
+        default=saved_config.get("output_format", "markdown"),
+        choices=["markdown", "html"],
+        help="报告输出格式（默认：markdown）"
+    )
+    parser.add_argument(
         "--show-steps",
         action="store_true",
         default=saved_config.get("show_steps", False),
@@ -636,6 +662,7 @@ def main(argv: Any = None) -> int:
         auto_approve=args.auto_approve,
         output_dir=args.output_dir,
         show_steps=args.show_steps,
+        output_format=args.output_format,
     )
 
     # 如果提供了任务参数，直接执行任务

@@ -19,7 +19,7 @@ class Rapporteur:
     Responsibilities:
     - Summarize research findings
     - Organize collected information
-    - Generate structured Markdown reports
+    - Generate structured reports (Markdown or HTML)
     - Format citations and references
     - Ensure report coherence and readability
     """
@@ -47,6 +47,7 @@ class Rapporteur:
         query = state['query']
         plan = state.get('research_plan', {})
         results = state.get('research_results', [])
+        output_format = state.get('output_format', 'markdown')
 
         # Summarize findings
         summary = self._summarize_findings(query, results)
@@ -54,14 +55,24 @@ class Rapporteur:
         # Organize information
         organized_info = self._organize_information(summary, results)
 
-        # Generate markdown report
-        report = self._generate_markdown_report(
-            query=query,
-            plan=plan,
-            summary=summary,
-            organized_info=organized_info,
-            results=results
-        )
+        # Generate report based on format
+        if output_format == 'html':
+            report = self._generate_html_report(
+                query=query,
+                plan=plan,
+                summary=summary,
+                organized_info=organized_info,
+                results=results
+            )
+        else:
+            # Default to markdown
+            report = self._generate_markdown_report(
+                query=query,
+                plan=plan,
+                summary=summary,
+                organized_info=organized_info,
+                results=results
+            )
 
         # Update state
         state['final_report'] = report
@@ -312,6 +323,64 @@ class Rapporteur:
 
         conclusion = self.llm.generate(prompt, temperature=0.5, max_tokens=800)
         return conclusion
+
+    def _generate_html_report(
+        self,
+        query: str,
+        plan: Dict,
+        summary: str,
+        organized_info: Dict,
+        results: List[Dict]
+    ) -> str:
+        """
+        Generate a structured HTML report.
+
+        Args:
+            query: Research query
+            plan: Research plan
+            summary: Research summary
+            organized_info: Organized information
+            results: Research results
+
+        Returns:
+            HTML formatted report
+        """
+        # Generate analysis and conclusion
+        analysis = self._generate_synthesized_analysis(query, summary, organized_info, results)
+        conclusion = self._generate_conclusion(query, summary)
+
+        # Format themes as HTML-friendly text
+        themes_text = ""
+        for theme in organized_info.get('themes', []):
+            themes_text += f"<h3>{theme['name']}</h3>\n<ul>\n"
+            for point in theme.get('key_points', []):
+                themes_text += f"<li>{point}</li>\n"
+            themes_text += "</ul>\n"
+
+        # Format citations
+        citations = self._format_citations(results)
+
+        # Generate HTML using LLM
+        prompt = self.prompt_loader.load(
+            'rapporteur_generate_html',
+            query=query,
+            research_goal=plan.get('research_goal', query),
+            summary=summary,
+            themes=themes_text,
+            analysis=analysis,
+            citations=citations,
+            conclusion=conclusion
+        )
+
+        html_report = self.llm.generate(prompt, temperature=0.3, max_tokens=4000)
+
+        # Clean up the HTML (remove markdown code blocks if LLM added them)
+        if '```html' in html_report:
+            html_report = html_report.split('```html')[1].split('```')[0].strip()
+        elif '```' in html_report:
+            html_report = html_report.split('```')[1].split('```')[0].strip()
+
+        return html_report
 
     def save_report(self, report: str, filepath: str) -> bool:
         """

@@ -26,6 +26,7 @@ class ResearchState(TypedDict):
     current_step: str
     needs_more_research: bool
     user_feedback: Optional[str]
+    output_format: str  # "markdown" or "html"
 
 
 class PlanStructure(TypedDict):

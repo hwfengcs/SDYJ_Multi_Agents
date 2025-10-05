@@ -18,10 +18,11 @@ This project makes these AI assistants work together to help you complete deep r
 ## ✨ What can it do?
 
 ✅ **Beginner-friendly**: Just one command to get started
-✅ **Multiple AI models**: Supports GPT-4, Claude, Gemini, DeepSeek, and more
+✅ **Multiple AI models**: Supports GPT, Claude, Gemini, DeepSeek, and more
 ✅ **Multi-source search**: Automatically searches web pages, academic papers, and more
 ✅ **Human review**: Research plan requires your approval before proceeding
-✅ **Auto-generated reports**: Outputs beautiful Markdown format research reports
+✅ **Multiple report formats**: Supports both Markdown and HTML output formats
+✅ **Auto-generated reports**: Outputs beautiful professional research reports
 ✅ **Real-time progress**: Watch AI complete research step by step
 
 ## 🎬 Use Cases
@@ -101,6 +102,11 @@ python main.py research \
   --output my_report.md \
   "Analyze AI development trends"
 
+# Generate HTML format report
+python main.py research \
+  --output-format html \
+  "Quantum computing applications"
+
 # Skip human review, fully automatic
 python main.py research --auto-approve "Blockchain technology applications"
 ```
@@ -137,7 +143,11 @@ Absolutely! You just need to:
 <details>
 <summary><b>Q: Where are reports saved?</b></summary>
 
-Reports are saved in the `outputs/` folder with format: `research_report_YYYYMMDD_HHMMSS.md`
+Reports are saved in the `outputs/` folder:
+- Markdown format: `research_report_YYYYMMDD_HHMMSS.md`
+- HTML format: `research_report_YYYYMMDD_HHMMSS.html`
+
+You can choose the format using `--output-format` parameter or configure it in the interactive menu.
 </details>
 
 <details>
@@ -157,6 +167,18 @@ Yes. Press `Ctrl+C` to interrupt, and simply run again when ready.
 
 Method 1: Edit `LLM_PROVIDER` in the `.env` file and set the corresponding API key
 Method 2: Use parameters at runtime: `--llm-provider openai --llm-model gpt-4`
+</details>
+
+<details>
+<summary><b>Q: What's the difference between Markdown and HTML formats?</b></summary>
+
+- **Markdown (.md)**: Plain text format, ideal for version control and documentation, opens with Typora, VS Code, etc.
+- **HTML (.html)**: Web page format with beautiful styling, opens directly in browsers, perfect for sharing and presentations
+
+How to choose the format:
+1. Command-line parameter: `--output-format html` or `--output-format markdown`
+2. Interactive menu: Select "Configure settings" → Output format
+3. Configuration file: Set `"output_format": "html"` in `config.json`
 </details>
 
 ## 🎯 How It Works
@@ -197,6 +219,7 @@ MCP_SERVER_URL=http://...      # MCP server (optional)
 MAX_ITERATIONS=5               # Maximum search rounds
 AUTO_APPROVE_PLAN=false        # Auto-approve plans
 OUTPUT_DIR=./outputs           # Report save location
+OUTPUT_FORMAT=markdown         # Report format (markdown or html)
 ```
 </details>
 
