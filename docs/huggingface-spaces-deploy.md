@@ -1,0 +1,124 @@
+# Deploying SDYJ to Hugging Face Spaces
+
+The Web UI in `SDYJ_Agents/web/app.py` runs on Hugging Face Spaces with a
+single one-time setup. The deployed Space gives users a live, no-install demo
+they can try in 60 seconds — the highest-leverage way to convert "saw the repo"
+into "starred and shared the repo".
+
+This guide assumes you already have a Hugging Face account.
+
+## 1. Create the Space
+
+1. Go to https://huggingface.co/new-space.
+2. **Owner**: your account (or org).
+3. **Space name**: `sdyj-multi-agents` (or any name you like).
+4. **License**: MIT.
+5. **Select the Space SDK**: **Streamlit**.
+6. **Hardware**: CPU basic (free) is enough for the MVP.
+7. **Visibility**: Public.
+
+Click **Create Space**. Hugging Face creates an empty Git repo.
+
+## 2. Configure the Space metadata
+
+Spaces reads a YAML frontmatter from the repo's `README.md`. Replace the file
+in your new Space with the snippet below (you can paste this in the web UI
+editor, "Files" tab):
+
+```yaml
+---
+title: SDYJ Multi Agents
+emoji: 🔎
+colorFrom: blue
+colorTo: indigo
+sdk: streamlit
+sdk_version: "1.36.0"
+app_file: streamlit_app.py
+pinned: false
+license: mit
+short_description: Self-verifying, replayable multi-agent research framework.
+---
+
+# SDYJ Multi Agents — live demo
+
+This Space hosts the Streamlit Web UI for SDYJ Multi Agents.
+
+Source code: https://github.com/hwfengcs/SDYJ_Multi_Agents
+Release notes: https://github.com/hwfengcs/SDYJ_Multi_Agents/blob/main/docs/release-notes/v0.6.md
+```
+
+Save. The frontmatter is what tells HF to use Streamlit + `streamlit_app.py`
+as the entrypoint.
+
+## 3. Push the code
+
+The simplest pattern is to mirror this repo into the Space repo:
+
+```bash
+# In a fresh directory
+git clone https://huggingface.co/spaces/<your-username>/sdyj-multi-agents space
+cd space
+
+# Pull code from this repo (preserve histories — or do a fresh copy if you
+# don't care about history matching).
+git remote add upstream https://github.com/hwfengcs/SDYJ_Multi_Agents.git
+git fetch upstream main
+git merge upstream/main --allow-unrelated-histories
+
+# Make sure the README.md frontmatter from step 2 is preserved (the merge may
+# overwrite it; keep your Space's README.md and only port over the body).
+
+git push origin main
+```
+
+Hugging Face will start a build. Watch the **Logs** tab in the Space UI; the
+first build takes 2–3 minutes because it installs all dependencies.
+
+## 4. Set the Space secrets
+
+The app refuses to run when no LLM API key is set. In the Space UI:
+
+1. Open **Settings → Variables and secrets**.
+2. Add the following secrets (use **New secret**, not "variable", so the
+   values are not exposed in build logs):
+
+   - `DEEPSEEK_API_KEY` — recommended, cheapest provider.
+   - `TAVILY_API_KEY` — required for web search.
+   - Optional: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` — only
+     if you want to expose those providers in the dropdown.
+
+3. Restart the Space (Settings → Factory rebuild) so the new secrets are
+   picked up by the running container.
+
+## 5. Update the README badge
+
+Once the Space URL is live (e.g. `https://huggingface.co/spaces/<you>/sdyj-multi-agents`),
+edit `README.md` and `README_EN.md` to add a badge near the top:
+
+```markdown
+[![Open in Spaces](https://img.shields.io/badge/🤗_Spaces-Try_demo-blue)](https://huggingface.co/spaces/<you>/sdyj-multi-agents)
+```
+
+That badge is the single highest-conversion element for new visitors — keep
+it above the fold.
+
+## Cost notes
+
+- The app prints per-call token + USD cost in the **LLM cost** tab. With
+  DeepSeek + a 3-iteration research run, expect roughly **$0.02–0.05** per
+  query. This is the upper bound that will land on your provider account
+  while the Space is public.
+- HF's free CPU Space tier rate-limits queries through the inference quota
+  but does not bill you for users; LLM usage cost is paid against the keys
+  you set in step 4.
+
+## Local dry run before pushing
+
+```bash
+pip install -e ".[web]"
+streamlit run streamlit_app.py
+# Open http://localhost:8501 — same UI that runs on Spaces.
+```
+
+If the local dry run works and the Space build logs come back green, the
+demo is live.
