@@ -24,6 +24,7 @@ class ClaudeLLM(BaseLLM):
             **kwargs: Additional configuration
         """
         super().__init__(api_key, model, **kwargs)
+        self.last_usage = None
         self.client = Anthropic(api_key=api_key)
 
     def generate(self, prompt: str, **kwargs) -> str:
@@ -49,6 +50,15 @@ class ClaudeLLM(BaseLLM):
             messages=[{"role": "user", "content": prompt}],
             **params
         )
+        # Anthropic returns input_tokens / output_tokens; SDYJ_Agents.utils.cost
+        # normalizes both naming conventions, so we expose the raw dict.
+        if response.usage:
+            self.last_usage = {
+                "input_tokens": response.usage.input_tokens,
+                "output_tokens": response.usage.output_tokens,
+            }
+        else:
+            self.last_usage = None
         return response.content[0].text
 
     def stream_generate(self, prompt: str, **kwargs) -> Iterator[str]:

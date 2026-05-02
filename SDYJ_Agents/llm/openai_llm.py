@@ -24,6 +24,7 @@ class OpenAILLM(BaseLLM):
             **kwargs: Additional configuration
         """
         super().__init__(api_key, model, **kwargs)
+        self.last_usage = None
         self.client = OpenAI(api_key=api_key)
 
     def generate(self, prompt: str, **kwargs) -> str:
@@ -45,6 +46,7 @@ class OpenAILLM(BaseLLM):
             messages=[{"role": "user", "content": prompt}],
             **params
         )
+        self.last_usage = response.usage.model_dump() if response.usage else None
         return response.choices[0].message.content
 
     def stream_generate(self, prompt: str, **kwargs) -> Iterator[str]:

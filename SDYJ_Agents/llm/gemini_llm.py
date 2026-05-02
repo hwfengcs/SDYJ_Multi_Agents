@@ -25,6 +25,7 @@ class GeminiLLM(BaseLLM):
             **kwargs: Additional configuration
         """
         super().__init__(api_key, model, **kwargs)
+        self.last_usage = None
         self.client = genai.Client(api_key=api_key)
 
     def _build_config(self, params: dict) -> types.GenerateContentConfig | None:
@@ -62,6 +63,18 @@ class GeminiLLM(BaseLLM):
             request["config"] = config
 
         response = self.client.models.generate_content(**request)
+        # google-genai exposes prompt_token_count / candidates_token_count;
+        # SDYJ_Agents.utils.cost.normalize_usage understands both naming
+        # styles, so we keep the native field names here.
+        usage_metadata = getattr(response, "usage_metadata", None)
+        if usage_metadata is not None:
+            self.last_usage = {
+                "prompt_token_count": getattr(usage_metadata, "prompt_token_count", 0) or 0,
+                "candidates_token_count": getattr(usage_metadata, "candidates_token_count", 0) or 0,
+                "total_token_count": getattr(usage_metadata, "total_token_count", 0) or 0,
+            }
+        else:
+            self.last_usage = None
         return response.text
 
     def stream_generate(self, prompt: str, **kwargs) -> Iterator[str]:

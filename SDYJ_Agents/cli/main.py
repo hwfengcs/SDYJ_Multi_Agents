@@ -686,6 +686,40 @@ def inspect_run(
         if trace.get("tool_calls"):
             console.print(tools)
 
+        if trace.get("llm_calls"):
+            llm_table = Table(title="LLM Calls (per call cost estimates)")
+            llm_table.add_column("Call")
+            llm_table.add_column("Model")
+            llm_table.add_column("Prompt tok", justify="right")
+            llm_table.add_column("Completion tok", justify="right")
+            llm_table.add_column("Latency ms", justify="right")
+            llm_table.add_column("Cost USD", justify="right")
+            llm_table.add_column("Error")
+            unknown_priced = False
+            for call in trace.get("llm_calls", []):
+                cost = call.get("cost_usd")
+                if cost is None:
+                    cost_cell = "—"
+                    unknown_priced = True
+                else:
+                    cost_cell = f"${cost:.6f}"
+                llm_table.add_row(
+                    str(call.get("call_id") or ""),
+                    str(call.get("model") or ""),
+                    str(call.get("prompt_tokens_actual") or 0),
+                    str(call.get("completion_tokens_actual") or 0),
+                    str(call.get("latency_ms") or 0),
+                    cost_cell,
+                    str(call.get("error") or ""),
+                )
+            console.print(llm_table)
+            if unknown_priced:
+                console.print(
+                    "[yellow]Tip:[/yellow] '—' means SDYJ_Agents/utils/cost.py "
+                    "has no entry for that (provider, model). Add the price to "
+                    "PRICING_TABLE for accurate totals."
+                )
+
         if timeline:
             events = iter_timeline_events(trace)
             if event_id:
