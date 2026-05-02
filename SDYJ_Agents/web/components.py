@@ -7,6 +7,7 @@ classes, so they are easy to test or swap out for a different framework later.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, Iterable, List, Optional
 
 import streamlit as st
@@ -151,6 +152,47 @@ def render_tool_calls_table(tool_calls: List[Dict[str, Any]]) -> None:
     st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
+def _compact_json(value: Any, limit: int = 180) -> str:
+    if value in (None, {}, []):
+        return ""
+    try:
+        text = json.dumps(value, ensure_ascii=False, default=str)
+    except TypeError:
+        text = str(value)
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}..."
+
+
+def _timeline_event_details(event: Dict[str, Any]) -> str:
+    """Build a compact human-readable details cell for timeline tables."""
+    if event.get("event_type") == "plan_refinement":
+        input_snapshot = event.get("input_snapshot") or {}
+        output_snapshot = event.get("output_snapshot") or {}
+        parts = []
+        completed = input_snapshot.get("completed_subtasks")
+        remaining = input_snapshot.get("remaining_subtasks")
+        if completed is not None or remaining is not None:
+            parts.append(f"completed={completed or 0}, remaining={remaining or 0}")
+        added = output_snapshot.get("added_task_ids") or []
+        removed = output_snapshot.get("removed_task_ids") or []
+        if added:
+            parts.append(f"added={added}")
+        if removed:
+            parts.append(f"removed={removed}")
+        rationale = output_snapshot.get("rationale")
+        if rationale:
+            parts.append(f"rationale={rationale}")
+        if event.get("error"):
+            parts.append(f"error={event['error']}")
+        return "; ".join(parts)
+
+    details = event.get("metadata") or {}
+    if event.get("error"):
+        details = {**details, "error": event.get("error")}
+    return _compact_json(details)
+
+
 def render_timeline(events: Iterable[Dict[str, Any]]) -> None:
     """Render the trace v2 event timeline, lightly formatted.
 
@@ -168,6 +210,7 @@ def render_timeline(events: Iterable[Dict[str, Any]]) -> None:
                 "Node": event.get("node") or "—",
                 "Status": event.get("status", "—"),
                 "Latency (ms)": event.get("latency_ms") if event.get("latency_ms") is not None else "—",
+                "Details": _timeline_event_details(event),
                 "Error": event.get("error") or "",
             }
         )

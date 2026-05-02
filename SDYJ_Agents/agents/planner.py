@@ -358,16 +358,24 @@ class Planner:
         merged = list(completed_subtasks) + new_pending
         # Re-key any task with a missing or duplicate task_id so downstream
         # code (Researcher, Verifier prompts) keeps working.
-        existing_ids = {task.get('task_id') for task in completed_subtasks if task.get('task_id') is not None}
+        existing_ids = {
+            Planner._normalize_task_id(task.get('task_id'))
+            for task in completed_subtasks
+        }
+        existing_ids.discard(None)
         next_id = max(existing_ids, default=0) + 1
         for task in new_pending:
-            if task.get('task_id') in (None, '', 0) or task.get('task_id') in existing_ids:
+            normalized_id = Planner._normalize_task_id(task.get('task_id'))
+            if normalized_id is None or normalized_id in existing_ids:
+                while next_id in existing_ids:
+                    next_id += 1
                 task['task_id'] = next_id
                 existing_ids.add(next_id)
                 next_id += 1
             else:
-                existing_ids.add(task['task_id'])
-                next_id = max(next_id, int(task['task_id']) + 1)
+                task['task_id'] = normalized_id
+                existing_ids.add(normalized_id)
+                next_id = max(next_id, normalized_id + 1)
 
         plan = state.get('research_plan') or {}
         plan['sub_tasks'] = merged
@@ -388,6 +396,20 @@ class Planner:
                 }
             )
         state['research_plan'] = plan
+
+    @staticmethod
+    def _normalize_task_id(value) -> Optional[int]:
+        """Return a positive integer task id, or None for unusable IDs."""
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value if value > 0 else None
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.isdigit():
+                parsed = int(stripped)
+                return parsed if parsed > 0 else None
+        return None
 
     def format_plan_for_display(self, plan: PlanStructure) -> str:
         """

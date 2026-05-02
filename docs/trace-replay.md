@@ -30,7 +30,7 @@ Trace v2 keeps the original summary arrays and adds an event timeline:
 - `llm_calls`: model latency, prompt/response sizes, hashes, previews, usage.
 - `tool_calls`: source, query, task, result count, latency, and errors.
 - `events`: normalized timeline events for nodes, LLM calls, tools, routing
-  decisions, human approval, and artifacts.
+  decisions, human approval, plan refinement, and artifacts.
 - `replay_cache`: recorded LLM responses and tool results for deterministic
   replay.
 - `artifacts`: paths to the run bundle files.
@@ -79,6 +79,18 @@ it possible to compare the original and replayed executions:
 ```bash
 python main.py diff-runs <original-run-id> <replay-run-id>
 ```
+
+Replay also restores v0.6 feature flags from `trace.config` so the recorded
+LLM-call order stays aligned with the original run:
+
+- `enable_reflection`
+- `enable_plan_refinement`
+- `skip_verification`
+- `max_revisions`
+
+For legacy traces that do not contain `enable_plan_refinement`, replay defaults
+plan refinement to off. This avoids introducing an extra Planner LLM call that
+the source trace never recorded.
 
 ## What Replay Is For
 
