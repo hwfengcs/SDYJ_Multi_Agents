@@ -129,7 +129,8 @@ class ResearchWorkflow:
         query: str,
         max_iterations: Optional[int] = None,
         auto_approve: bool = False,
-        output_format: str = "markdown"
+        output_format: str = "markdown",
+        trace: Optional[dict] = None
     ) -> dict:
         """
         Run the research workflow.
@@ -145,12 +146,15 @@ class ResearchWorkflow:
         """
         # Initialize state
         initial_state = self.coordinator.initialize_research(query, auto_approve=auto_approve, output_format=output_format)
+        if trace:
+            initial_state['trace'] = trace
 
         if max_iterations:
             initial_state['max_iterations'] = max_iterations
 
         # Run the graph with thread configuration for checkpointer
-        config = {"configurable": {"thread_id": "1"}}
+        thread_id = trace.get("run_id", "1") if trace else "1"
+        config = {"configurable": {"thread_id": thread_id}}
         final_state = self.graph.invoke(initial_state, config=config)
 
         return final_state
@@ -160,7 +164,8 @@ class ResearchWorkflow:
         query: str,
         max_iterations: Optional[int] = None,
         auto_approve: bool = False,
-        output_format: str = "markdown"
+        output_format: str = "markdown",
+        trace: Optional[dict] = None
     ):
         """
         Stream the research workflow execution.
@@ -176,12 +181,15 @@ class ResearchWorkflow:
         """
         # Initialize state
         initial_state = self.coordinator.initialize_research(query, auto_approve=auto_approve, output_format=output_format)
+        if trace:
+            initial_state['trace'] = trace
 
         if max_iterations:
             initial_state['max_iterations'] = max_iterations
 
         # Stream the graph execution with thread configuration for checkpointer
-        config = {"configurable": {"thread_id": "1"}}
+        thread_id = trace.get("run_id", "1") if trace else "1"
+        config = {"configurable": {"thread_id": thread_id}}
         for output in self.graph.stream(initial_state, config=config):
             yield output
 
@@ -191,7 +199,8 @@ class ResearchWorkflow:
         max_iterations: Optional[int] = None,
         auto_approve: bool = False,
         human_approval_callback = None,
-        output_format: str = "markdown"
+        output_format: str = "markdown",
+        trace: Optional[dict] = None
     ):
         """
         Stream the research workflow execution with interactive human approval.
@@ -209,11 +218,14 @@ class ResearchWorkflow:
         """
         # Initialize state
         initial_state = self.coordinator.initialize_research(query, auto_approve=auto_approve, output_format=output_format)
+        if trace:
+            initial_state['trace'] = trace
 
         if max_iterations:
             initial_state['max_iterations'] = max_iterations
 
-        config = {"configurable": {"thread_id": "1"}}
+        thread_id = trace.get("run_id", "1") if trace else "1"
+        config = {"configurable": {"thread_id": thread_id}}
 
         # Track if we've handled the approval
         approval_handled = False

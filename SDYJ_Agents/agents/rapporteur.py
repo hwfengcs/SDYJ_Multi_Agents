@@ -10,6 +10,13 @@ from datetime import datetime
 from ..workflow.state import ResearchState
 from ..llm.base import BaseLLM
 from ..prompts.loader import PromptLoader
+from ..utils.evidence import (
+    append_citations,
+    build_evidence_from_results,
+    calculate_evidence_metrics,
+    format_evidence_for_prompt,
+)
+from ..utils.tracing import record_report_summary
 
 
 class Rapporteur:
@@ -47,10 +54,12 @@ class Rapporteur:
         query = state['query']
         plan = state.get('research_plan', {})
         results = state.get('research_results', [])
+        evidence_items = state.get('evidence_items') or build_evidence_from_results(results)
+        state['evidence_items'] = evidence_items
         output_format = state.get('output_format', 'markdown')
 
         # Summarize findings
-        summary = self._summarize_findings(query, results)
+        summary = self._summarize_findings(query, results, evidence_items)
 
         # Organize information
         organized_info = self._organize_information(summary, results)
@@ -62,7 +71,8 @@ class Rapporteur:
                 plan=plan,
                 summary=summary,
                 organized_info=organized_info,
-                results=results
+                results=results,
+                evidence_items=evidence_items
             )
         else:
             # Default to markdown
@@ -71,16 +81,34 @@ class Rapporteur:
                 plan=plan,
                 summary=summary,
                 organized_info=organized_info,
-                results=results
+                results=results,
+                evidence_items=evidence_items
             )
+
+        metrics = calculate_evidence_metrics(results, evidence_items, report)
 
         # Update state
         state['final_report'] = report
+        state['report_metrics'] = metrics
         state['current_step'] = 'completed'
+        record_report_summary(
+            state.get('trace'),
+            report_format=output_format,
+            source_count=len(results),
+            evidence_count=len(evidence_items),
+            citation_count=metrics.get('citation_count', 0),
+        )
+        if state.get('trace'):
+            state['trace'].setdefault('metrics', {}).update(metrics)
 
         return state
 
-    def _summarize_findings(self, query: str, results: List[Dict]) -> str:
+    def _summarize_findings(
+        self,
+        query: str,
+        results: List[Dict],
+        evidence_items: List[Dict] | None = None
+    ) -> str:
         """
         Summarize all research findings.
 
@@ -91,13 +119,9 @@ class Rapporteur:
         Returns:
             Summary of findings
         """
-        # Compile all result snippets
-        all_content = []
-        for result in results:
-            for item in result.get('results', []):
-                all_content.append(f"- {item.get('title', 'No title')}: {item.get('snippet', '')[:200]}")
-
-        content_text = '\n'.join(all_content[:30])  # Limit to 30 items
+        if evidence_items is None:
+            evidence_items = build_evidence_from_results(results)
+        content_text = format_evidence_for_prompt(evidence_items, limit=30)
 
         prompt = self.prompt_loader.load(
             'rapporteur_summarize',
@@ -155,7 +179,8 @@ class Rapporteur:
         plan: Dict,
         summary: str,
         organized_info: Dict,
-        results: List[Dict]
+        results: List[Dict],
+        evidence_items: List[Dict] | None = None
     ) -> str:
         """
         Generate a structured Markdown report.
@@ -172,6 +197,7 @@ class Rapporteur:
         """
         # Build report sections
         sections = []
+        evidence_items = evidence_items or build_evidence_from_results(results)
 
         # Title
         sections.append(f"# 研究报告：{query}\n")
@@ -179,7 +205,8 @@ class Rapporteur:
         # Metadata
         sections.append(f"**生成时间：** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         sections.append(f"**研究目标：** {plan.get('research_goal', query)}\n")
-        sections.append(f"**信息来源数量：** {len(results)}\n")
+        sections.append(f"**检索批次数量：** {len(results)}\n")
+        sections.append(f"**去重证据数量：** {len(evidence_items)}\n")
 
         # Executive Summary
         sections.append("\n## 执行摘要\n")
@@ -190,19 +217,25 @@ class Rapporteur:
         for theme in organized_info.get('themes', []):
             sections.append(f"\n### {theme['name']}\n")
             for point in theme.get('key_points', []):
-                sections.append(f"- {point}\n")
+                sections.append(f"- {append_citations(point, evidence_items)}\n")
 
         # Synthesized Analysis (NEW: generate integrated analysis instead of simple listing)
         sections.append("\n## 深度分析\n")
-        sections.append(self._generate_synthesized_analysis(query, summary, organized_info, results))
+        sections.append(self._generate_synthesized_analysis(
+            query,
+            summary,
+            organized_info,
+            results,
+            evidence_items=evidence_items,
+        ))
 
         # Source overview
         sections.append("\n## 来源概览\n")
-        sections.append(self._format_source_overview(results))
+        sections.append(self._format_source_overview(results, evidence_items))
 
         # References
         sections.append("\n## 参考资料\n")
-        sections.append(self._format_citations(results))
+        sections.append(self._format_citations(results, evidence_items))
 
         # Conclusion
         sections.append("\n## 结论\n")
@@ -243,7 +276,11 @@ class Rapporteur:
 
         return '\n'.join(formatted)
 
-    def _format_source_overview(self, results: List[Dict]) -> str:
+    def _format_source_overview(
+        self,
+        results: List[Dict],
+        evidence_items: List[Dict] | None = None
+    ) -> str:
         """
         Format a compact source overview for report traceability.
 
@@ -255,6 +292,7 @@ class Rapporteur:
         """
         if not results:
             return "未收集到外部来源。"
+        evidence_items = evidence_items or build_evidence_from_results(results)
 
         stats = {}
         for result in results:
@@ -278,10 +316,16 @@ class Rapporteur:
             lines.append(
                 f"| {source} | {item['searches']} | {item['items']} | {item['errors']} |"
             )
+        lines.append("")
+        lines.append(f"去重后证据项：{len(evidence_items)}")
 
         return '\n'.join(lines)
 
-    def _format_citations(self, results: List[Dict]) -> str:
+    def _format_citations(
+        self,
+        results: List[Dict],
+        evidence_items: List[Dict] | None = None
+    ) -> str:
         """
         Format citations and references.
 
@@ -291,35 +335,37 @@ class Rapporteur:
         Returns:
             Formatted citations
         """
+        evidence_items = evidence_items or build_evidence_from_results(results)
         citations = []
-        citation_num = 1
-        seen = set()
 
-        for result in results:
-            for item in result.get('results', []):
-                title = item.get('title', 'Untitled')
-                url = item.get('url', '')
-                source = result.get('source', 'Unknown')
-                key = url or f"{source}:{title}"
-                if key in seen:
-                    continue
-                seen.add(key)
+        for item in evidence_items[:50]:
+            evidence_id = item.get('evidence_id', 'E?')
+            title = item.get('title', 'Untitled')
+            source = str(item.get('source', 'Unknown')).capitalize()
+            query = item.get('query') or 'N/A'
+            domain = item.get('domain') or 'N/A'
+            published = item.get('published_date') or 'N/A'
+            url = item.get('url', '')
+            if url:
+                citations.append(
+                    f"- [{evidence_id}] {title} - {source} - {domain} - {published} - "
+                    f"query: `{query}` - [{url}]({url})"
+                )
+            else:
+                citations.append(
+                    f"- [{evidence_id}] {title} - {source} - {domain} - {published} - "
+                    f"query: `{query}`"
+                )
 
-                if url:
-                    citations.append(f"{citation_num}. {title} - {source.capitalize()} - [{url}]({url})")
-                else:
-                    citations.append(f"{citation_num}. {title} - {source.capitalize()}")
-
-                citation_num += 1
-
-        return '\n'.join(citations[:50])  # Limit to 50 citations
+        return '\n'.join(citations)
 
     def _generate_synthesized_analysis(
         self,
         query: str,
         summary: str,
         organized_info: Dict,
-        results: List[Dict]
+        results: List[Dict],
+        evidence_items: List[Dict] | None = None
     ) -> str:
         """
         Generate synthesized analysis that integrates all findings.
@@ -333,13 +379,8 @@ class Rapporteur:
         Returns:
             Integrated analysis text
         """
-        # Extract key content from results
-        key_content = []
-        for result in results[:10]:  # Limit to first 10 results
-            for item in result.get('results', [])[:3]:  # Top 3 per result
-                key_content.append(f"- {item.get('snippet', '')[:300]}")
-
-        content_text = '\n'.join(key_content)
+        evidence_items = evidence_items or build_evidence_from_results(results)
+        content_text = format_evidence_for_prompt(evidence_items, limit=25)
 
         prompt = self.prompt_loader.load(
             'rapporteur_synthesized_analysis',
@@ -349,7 +390,7 @@ class Rapporteur:
         )
 
         analysis = self.llm.generate(prompt, temperature=0.6, max_tokens=2000)
-        return analysis
+        return append_citations(analysis, evidence_items, max_ids=3)
 
     def _generate_conclusion(self, query: str, summary: str) -> str:
         """
@@ -377,7 +418,8 @@ class Rapporteur:
         plan: Dict,
         summary: str,
         organized_info: Dict,
-        results: List[Dict]
+        results: List[Dict],
+        evidence_items: List[Dict] | None = None
     ) -> str:
         """
         Generate a structured HTML report.
@@ -393,7 +435,14 @@ class Rapporteur:
             HTML formatted report
         """
         # Generate analysis and conclusion
-        analysis = self._generate_synthesized_analysis(query, summary, organized_info, results)
+        evidence_items = evidence_items or build_evidence_from_results(results)
+        analysis = self._generate_synthesized_analysis(
+            query,
+            summary,
+            organized_info,
+            results,
+            evidence_items=evidence_items,
+        )
         conclusion = self._generate_conclusion(query, summary)
 
         # Format themes as HTML-friendly text
@@ -405,7 +454,7 @@ class Rapporteur:
             themes_text += "</ul>\n"
 
         # Format citations
-        citations = self._format_citations(results)
+        citations = self._format_citations(results, evidence_items)
 
         # Generate HTML using LLM
         prompt = self.prompt_loader.load(

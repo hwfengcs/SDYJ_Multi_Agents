@@ -14,6 +14,9 @@ SDYJ Multi Agents 是一个基于 LangGraph 的多智能体深度研究系统。
 - **Human-in-the-loop**：执行研究前先展示计划，用户可批准或反馈修改。
 - **多模型适配**：支持 DeepSeek、OpenAI、Claude、Gemini，统一 LLM 抽象层。
 - **多源检索**：集成 Tavily、arXiv，并预留 MCP 工具适配接口。
+- **证据驱动报告**：检索结果会规范化为 `E1/E2/...` 证据项，自动去重并保留 URL、domain、query、发布时间和相关性分数。
+- **Agent 可观测性**：每次运行都会生成 JSON trace，记录节点、LLM 调用、工具调用、latency、错误和报告指标。
+- **可复现评测**：内置困难 Agent 场景，支持离线 canned evidence 评测，也支持真实 DeepSeek live 评测。
 - **可复现工程**：提供 Python 包配置、CLI 入口、单元测试、CI、示例输出和架构文档。
 - **面向 Agent 岗位的信号**：关注 trace、evaluation、source grounding、tool reliability 等真实工程问题。
 
@@ -66,7 +69,7 @@ copy .env.example .env
 
 ```bash
 LLM_PROVIDER=deepseek
-LLM_MODEL=deepseek-chat
+LLM_MODEL=deepseek-v4-flash
 DEEPSEEK_API_KEY=sk-...
 TAVILY_API_KEY=tvly-...
 ```
@@ -99,7 +102,7 @@ sdyj research "对比 LangGraph、AutoGen 和 CrewAI 的设计取舍"
 ```bash
 python main.py research \
   --provider deepseek \
-  --model deepseek-chat \
+  --model deepseek-v4-flash \
   --max-iterations 3 \
   --output-format markdown \
   --auto-approve \
@@ -112,6 +115,39 @@ python main.py research \
 python main.py
 ```
 
+### 4. 查看运行轨迹
+
+每次研究和评测都会把 trace 写入 `outputs/traces/`：
+
+```bash
+python main.py inspect-run
+python main.py inspect-run <run-id>
+```
+
+trace 会展示节点数、LLM 调用数、工具调用数、错误、证据数量、引用覆盖率、重复 URL 比例、工具成功率等指标。
+
+### 5. 运行评测
+
+离线评测不需要真实 API key，使用固定困难场景和 canned evidence，适合 CI 和回归测试：
+
+```bash
+python main.py list-scenarios
+python main.py eval --max-scenarios 1 --max-iterations 2
+```
+
+真实 DeepSeek 评测会调用 `.env` 中的 `DEEPSEEK_API_KEY`，默认仍使用 canned evidence，方便把变量集中在模型推理质量上：
+
+```bash
+python main.py eval \
+  --live \
+  --provider deepseek \
+  --model deepseek-v4-flash \
+  --scenario agent_reliability_hard \
+  --max-iterations 2
+```
+
+如果需要同时评估真实搜索链路，可以加 `--live-search`。
+
 ## 项目结构
 
 ```text
@@ -122,7 +158,8 @@ SDYJ_Agents/
   prompts/      # Jinja prompt templates
   tools/        # Tavily, arXiv, MCP adapters
   workflow/     # LangGraph graph and state
-  utils/        # config and logging
+  utils/        # config, logging, evidence, tracing
+  evaluation/   # scenarios, metrics, eval runner
 docs/           # architecture, evaluation, roadmap context
 examples/       # small reproducible examples
 tests/          # unit tests with fake LLM/search
@@ -133,7 +170,13 @@ tests/          # unit tests with fake LLM/search
 - Markdown：适合版本管理、二次编辑、论文/报告草稿。
 - HTML：适合直接分享和演示。
 
-生成文件默认写入 `outputs/`，该目录已被 git 忽略。仓库展示样例见 [examples/sample_report.md](examples/sample_report.md)。
+生成文件默认写入 `outputs/`，该目录已被 git 忽略：
+
+- `outputs/research_report_*.md|html`：研究报告。
+- `outputs/traces/*.json`：可观测运行轨迹。
+- `outputs/eval_reports/`：评测报告和汇总。
+
+仓库展示样例见 [examples/sample_report.md](examples/sample_report.md)、[examples/sample_trace.json](examples/sample_trace.json) 和 [examples/eval_summary.json](examples/eval_summary.json)。
 
 ## 测试
 
@@ -148,10 +191,10 @@ ruff check SDYJ_Agents tests
 
 短期目标：
 
-- 增强 report evidence schema，让每个结论绑定来源、query 和置信度。
-- 增加 trace/cost/latency 指标，便于评测 Agent 运行质量。
+- 增强 report evidence schema，让每个结论绑定来源、query 和置信度。✅
+- 增加 trace/token/latency 指标，便于评测 Agent 运行质量。✅
+- 补充端到端 demo 和 benchmark case。✅
 - 完善 MCP adapter，使外部工具接入更标准。
-- 补充端到端 demo 和 benchmark case。
 
 完整路线图见 [ROADMAP.md](ROADMAP.md)。
 

@@ -13,24 +13,24 @@ portfolio project for AI agent engineering roles.
 
 ## v0.2 - Evidence-Grounded Reports
 
-- [ ] Add an explicit evidence schema for retrieved results.
-- [ ] Link every major report claim to source URLs.
-- [ ] Deduplicate repeated URLs across search tools.
-- [ ] Add source quality metadata such as domain, publication date, and score.
+- [x] Add an explicit evidence schema for retrieved results.
+- [x] Link major report claims to stable evidence IDs and source URLs.
+- [x] Deduplicate repeated URLs across search tools.
+- [x] Add source quality metadata such as domain, publication date, query, and score.
 
 ## v0.3 - Agent Observability
 
-- [ ] Persist a JSON trace per run.
-- [ ] Track tool-call latency and error rate.
-- [ ] Track token usage and estimated cost where providers expose it.
-- [ ] Add `sdyj inspect-run <run-id>` for debugging.
+- [x] Persist a JSON trace per run.
+- [x] Track tool-call latency, result counts, and error rate.
+- [x] Track LLM latency, prompt/response size, and provider token usage where exposed.
+- [x] Add `sdyj inspect-run <run-id>` for debugging.
 
 ## v0.4 - Evaluation Suite
 
-- [ ] Add canned scenario tests for academic, industry, and product research.
-- [ ] Add live smoke tests behind an opt-in flag.
-- [ ] Add report quality checks for coverage, citation density, and redundancy.
-- [ ] Publish benchmark results in `docs/evaluation.md`.
+- [x] Add canned scenario tests for hard agent engineering tasks.
+- [x] Add live smoke tests behind an opt-in flag.
+- [x] Add report quality checks for coverage, citation density, source deduplication, and tool reliability.
+- [x] Publish benchmark results in `docs/evaluation.md`.
 
 ## v0.5 - Extensibility
 

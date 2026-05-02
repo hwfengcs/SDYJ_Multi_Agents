@@ -159,7 +159,7 @@ def get_default_config() -> Dict[str, Any]:
     return {
         "llm": {
             "provider": "deepseek",
-            "model": "deepseek-chat",
+            "model": "deepseek-v4-flash",
             "temperature": 0.7
         },
         "search": {

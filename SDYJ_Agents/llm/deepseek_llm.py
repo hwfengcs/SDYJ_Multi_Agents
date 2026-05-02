@@ -19,7 +19,7 @@ class DeepSeekLLM(BaseLLM):
     def __init__(
         self,
         api_key: str,
-        model: str = "deepseek-chat",
+        model: str = "deepseek-v4-flash",
         base_url: str = "https://api.deepseek.com",
         **kwargs
     ):
@@ -28,11 +28,12 @@ class DeepSeekLLM(BaseLLM):
 
         Args:
             api_key: DeepSeek API key
-            model: Model name (default: deepseek-chat)
+            model: Model name (default: deepseek-v4-flash)
             base_url: API base URL (default: https://api.deepseek.com)
             **kwargs: Additional configuration
         """
         super().__init__(api_key, model, **kwargs)
+        self.last_usage = None
         self.client = OpenAI(
             api_key=api_key,
             base_url=base_url
@@ -57,6 +58,7 @@ class DeepSeekLLM(BaseLLM):
             messages=[{"role": "user", "content": prompt}],
             **params
         )
+        self.last_usage = response.usage.model_dump() if response.usage else None
         return response.choices[0].message.content
 
     def stream_generate(self, prompt: str, **kwargs) -> Iterator[str]:

@@ -20,9 +20,20 @@ from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown
+from rich.table import Table
 
+from ..evaluation import run_evaluation
+from ..evaluation.scenarios import list_scenarios
 from ..utils.config import load_config_from_env
 from ..utils.logger import setup_logger
+from ..utils.tracing import (
+    InstrumentedLLM,
+    create_run_trace,
+    latest_trace_path,
+    load_trace,
+    merge_trace_state,
+    save_trace,
+)
 from ..llm.factory import LLMFactory
 from ..agents.coordinator import Coordinator
 from ..agents.planner import Planner
@@ -38,7 +49,7 @@ error_console = Console(stderr=True)
 class CLIConfig:
     """CLI运行时配置"""
     provider: str = "deepseek"
-    model: str = "deepseek-chat"
+    model: str = "deepseek-v4-flash"
     max_iterations: int = 5
     auto_approve: bool = False
     output_dir: str = "./outputs"
@@ -50,7 +61,7 @@ class CLIConfig:
 CONFIG_FILE = Path(__file__).parent.parent.parent / "config.json"
 
 PROVIDER_DEFAULT_MODELS = {
-    "deepseek": "deepseek-chat",
+    "deepseek": "deepseek-v4-flash",
     "openai": "gpt-4o-mini",
     "claude": "claude-3-5-sonnet-20241022",
     "gemini": "gemini-1.5-pro",
@@ -67,7 +78,7 @@ PROVIDER_MODELS = {
     "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini"],
     "claude": ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
     "gemini": ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-pro"],
-    "deepseek": ["deepseek-chat", "deepseek-coder"],
+    "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"],
 }
 
 
@@ -347,6 +358,7 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
     """执行研究任务"""
     print_separator("-")
     console.print("[bold cyan]执行研究任务[/bold cyan]\n")
+    trace = None
 
     if not query:
         query = input("请输入研究问题：\n> ").strip()
@@ -355,6 +367,7 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
         console.print("[red][ERR] 研究问题不能为空[/red]")
         return
 
+    logger = None
     try:
         # Setup logger
         logger = setup_logger()
@@ -367,13 +380,21 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
         env_cfg.workflow.max_iterations = config.max_iterations
         env_cfg.workflow.auto_approve_plan = config.auto_approve
 
+        trace = create_run_trace(
+            query=query,
+            provider=config.provider,
+            model=config.model,
+            mode="research",
+        )
+
         # Create LLM
         console.print(f"[dim]正在初始化 {config.provider.upper()} LLM...[/dim]")
-        llm = LLMFactory.create_llm(
+        base_llm = LLMFactory.create_llm(
             provider=env_cfg.llm.provider,
             api_key=env_cfg.llm.api_key,
             model=env_cfg.llm.model
         )
+        llm = InstrumentedLLM(base_llm, trace)
 
         # Create agents
         console.print("[dim]正在初始化智能体...[/dim]")
@@ -403,7 +424,8 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
             config.max_iterations,
             auto_approve=config.auto_approve,
             human_approval_callback=human_approval_callback if not config.auto_approve else None,
-            output_format=config.output_format
+            output_format=config.output_format,
+            trace=trace
         )
 
         for state_update in stream_iter:
@@ -488,21 +510,40 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
 
             rapporteur.save_report(report, str(output_path))
             console.print(f"\n[green][OK] 报告已保存至：{output_path}[/green]")
+            trace = merge_trace_state(trace, current_state.get("trace"))
+            trace_path = save_trace(trace, config.output_dir)
+            if trace_path:
+                console.print(f"[green][OK] 运行轨迹已保存至：{trace_path}[/green]")
 
         elif current_state and current_state.get('simple_response'):
             # Simple query was handled, no need to show error
-            pass
+            trace = merge_trace_state(trace, current_state.get("trace"))
+            trace_path = save_trace(trace, config.output_dir)
+            if trace_path:
+                console.print(f"[green][OK] 运行轨迹已保存至：{trace_path}[/green]")
         else:
             console.print("[red][ERR] 研究未成功完成[/red]")
+            if current_state and isinstance(current_state, dict):
+                trace = merge_trace_state(trace, current_state.get("trace"))
+            trace_path = save_trace(trace, config.output_dir)
+            if trace_path:
+                console.print(f"[yellow][TRACE] 失败轨迹已保存至：{trace_path}[/yellow]")
 
         print_separator("-")
 
     except KeyboardInterrupt:
         console.print("\n\n[yellow]任务已被用户中断[/yellow]")
+        trace_path = save_trace(trace, config.output_dir) if trace else None
+        if trace_path:
+            console.print(f"[yellow][TRACE] 中断轨迹已保存至：{trace_path}[/yellow]")
         print_separator("-")
     except Exception as e:
         console.print(f"\n[red][ERR] 发生错误：{e}[/red]")
-        logger.exception("Research error")
+        if logger:
+            logger.exception("Research error")
+        trace_path = save_trace(trace, config.output_dir) if trace else None
+        if trace_path:
+            console.print(f"[yellow][TRACE] 错误轨迹已保存至：{trace_path}[/yellow]")
         print_separator("-")
 
 
@@ -577,6 +618,110 @@ def run_single_task(config: CLIConfig, query: str) -> int:
         return 1
 
 
+def inspect_run(run_id: str | None = None, output_dir: str = "./outputs") -> int:
+    """Inspect a persisted run trace."""
+    try:
+        if not run_id:
+            latest = latest_trace_path(output_dir)
+            if not latest:
+                error_console.print("[red][ERR] 未找到任何 trace 文件[/red]")
+                return 1
+            trace = load_trace(str(latest), output_dir)
+        else:
+            trace = load_trace(run_id, output_dir)
+
+        console.print(Panel.fit(
+            f"[bold cyan]Run {trace.get('run_id')}[/bold cyan]\n"
+            f"mode={trace.get('mode')} provider={trace.get('provider')} model={trace.get('model')}\n"
+            f"scenario={trace.get('scenario_id') or 'N/A'}",
+            title="SDYJ Trace",
+            border_style="cyan",
+        ))
+        console.print(f"[bold]Query:[/bold] {trace.get('query')}\n")
+
+        summary = Table(title="Trace Summary")
+        summary.add_column("Metric")
+        summary.add_column("Value", justify="right")
+        summary.add_row("Nodes", str(len(trace.get("nodes", []))))
+        summary.add_row("LLM calls", str(len(trace.get("llm_calls", []))))
+        summary.add_row("Tool calls", str(len(trace.get("tool_calls", []))))
+        summary.add_row("Errors", str(len(trace.get("errors", []))))
+        for key, value in (trace.get("metrics") or {}).items():
+            if isinstance(value, float):
+                value = f"{value:.4f}"
+            summary.add_row(key, str(value))
+        console.print(summary)
+
+        tools = Table(title="Tool Calls")
+        tools.add_column("Source")
+        tools.add_column("Results", justify="right")
+        tools.add_column("Latency ms", justify="right")
+        tools.add_column("Error")
+        for call in trace.get("tool_calls", []):
+            tools.add_row(
+                str(call.get("source")),
+                str(call.get("result_count")),
+                str(call.get("latency_ms")),
+                str(call.get("error") or ""),
+            )
+        if trace.get("tool_calls"):
+            console.print(tools)
+
+        if trace.get("errors"):
+            console.print("[bold red]Errors[/bold red]")
+            for error in trace["errors"]:
+                console.print(f"- {error.get('where')}: {error.get('error')}")
+        return 0
+    except Exception as e:
+        error_console.print(f"[red][ERR] Trace 读取失败：{e}[/red]")
+        return 1
+
+
+def execute_evaluation(args: argparse.Namespace) -> int:
+    """Run evaluation scenarios and print a compact dashboard."""
+    try:
+        summary = run_evaluation(
+            live=args.live,
+            provider=args.provider,
+            model=args.model,
+            scenario_ids=args.scenario,
+            max_scenarios=args.max_scenarios,
+            live_search=args.live_search,
+            max_iterations=args.max_iterations,
+            output_format=args.output_format,
+            output_dir=args.output_dir,
+        )
+
+        table = Table(title="SDYJ Evaluation")
+        table.add_column("Scenario")
+        table.add_column("Score", justify="right")
+        table.add_column("Plan", justify="right")
+        table.add_column("Citations", justify="right")
+        table.add_column("Tool OK", justify="right")
+        table.add_column("Trace")
+        for item in summary["results"]:
+            metrics = item["metrics"]
+            table.add_row(
+                item["scenario_id"],
+                f"{metrics['overall_score']:.4f}",
+                f"{metrics['plan_coverage']:.2f}",
+                f"{metrics['citation_id_coverage']:.2f}",
+                f"{metrics['tool_success_rate']:.2f}",
+                item["run_id"],
+            )
+        console.print(table)
+        console.print(f"[green][OK] 评测摘要已保存至：{summary['summary_path']}[/green]")
+        for item in summary["results"]:
+            if item.get("report_path"):
+                console.print(f"[dim]report: {item['report_path']}[/dim]")
+            if item.get("trace_path"):
+                console.print(f"[dim]trace: {item['trace_path']}[/dim]")
+        return 0
+    except Exception as e:
+        error_console.print(f"[red][ERR] 评测失败：{e}[/red]")
+        return 1
+
+
 def _add_runtime_options(parser: argparse.ArgumentParser, saved_config: Dict[str, Any]) -> None:
     """Add shared options used by research and interactive modes."""
     parser.add_argument(
@@ -624,7 +769,7 @@ def _add_runtime_options(parser: argparse.ArgumentParser, saved_config: Dict[str
 def _create_config_from_args(args: argparse.Namespace) -> CLIConfig:
     """Create CLIConfig from parsed args and provider defaults."""
     if not getattr(args, "model", None):
-        args.model = PROVIDER_DEFAULT_MODELS.get(args.provider, "deepseek-chat")
+        args.model = PROVIDER_DEFAULT_MODELS.get(args.provider, "deepseek-v4-flash")
 
     return CLIConfig(
         provider=args.provider,
@@ -649,6 +794,8 @@ def parse_args(argv: Any) -> argparse.Namespace:
             "  python main.py research \"Transformer 架构最新进展\"\n"
             "  python main.py \"Transformer 架构最新进展\"\n"
             "  python main.py list-models deepseek\n"
+            "  python main.py eval --max-scenarios 1\n"
+            "  python main.py inspect-run\n"
             "  python main.py config-info"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -656,7 +803,7 @@ def parse_args(argv: Any) -> argparse.Namespace:
     root_parser.add_argument(
         "--version",
         action="version",
-        version="SDYJ Deep Research System 0.1.0"
+        version="SDYJ Deep Research System 0.4.0"
     )
 
     if argv and argv[0] in {"-h", "--help", "--version"}:
@@ -673,6 +820,79 @@ def parse_args(argv: Any) -> argparse.Namespace:
         )
         args = parser.parse_args(argv[1:])
         args.command = "list-models"
+        return args
+
+    if argv and argv[0] == "list-scenarios":
+        parser = argparse.ArgumentParser(description="列出内置评测场景")
+        args = parser.parse_args(argv[1:])
+        args.command = "list-scenarios"
+        return args
+
+    if argv and argv[0] == "inspect-run":
+        parser = argparse.ArgumentParser(description="查看已保存的 run trace")
+        parser.add_argument("run_id", nargs="?", help="run_id 或 trace JSON 路径；不传则查看最新 trace")
+        parser.add_argument(
+            "--output-dir",
+            default=saved_config.get("output_dir", "./outputs"),
+            help="输出目录（默认：./outputs）",
+        )
+        args = parser.parse_args(argv[1:])
+        args.command = "inspect-run"
+        return args
+
+    if argv and argv[0] == "eval":
+        parser = argparse.ArgumentParser(description="运行 SDYJ Agent 评测套件")
+        parser.add_argument(
+            "--live",
+            action="store_true",
+            help="使用真实 LLM（默认 provider=deepseek）；不加则使用 fake LLM 做离线可复现评测",
+        )
+        parser.add_argument(
+            "--provider",
+            default=saved_config.get("provider", "deepseek"),
+            choices=["deepseek", "openai", "claude", "gemini"],
+            help="真实评测使用的 LLM 提供商",
+        )
+        parser.add_argument(
+            "--model",
+            default=saved_config.get("model"),
+            help="真实评测使用的模型；不填则使用环境变量或提供商默认",
+        )
+        parser.add_argument(
+            "--scenario",
+            action="append",
+            help="只运行指定场景 ID；可重复传入",
+        )
+        parser.add_argument(
+            "--max-scenarios",
+            type=int,
+            default=None,
+            help="最多运行多少个场景",
+        )
+        parser.add_argument(
+            "--live-search",
+            action="store_true",
+            help="同时使用真实搜索工具；默认使用 canned evidence 保证可复现",
+        )
+        parser.add_argument(
+            "--max-iterations",
+            type=int,
+            default=saved_config.get("max_iterations", 3),
+            help="每个场景最大研究迭代次数",
+        )
+        parser.add_argument(
+            "--output-dir",
+            default=saved_config.get("output_dir", "./outputs"),
+            help="评测报告和 trace 输出目录",
+        )
+        parser.add_argument(
+            "--output-format",
+            default=saved_config.get("output_format", "markdown"),
+            choices=["markdown", "html"],
+            help="评测报告输出格式",
+        )
+        args = parser.parse_args(argv[1:])
+        args.command = "eval"
         return args
 
     if argv and argv[0] == "config-info":
@@ -714,6 +934,26 @@ def main(argv: Any = None) -> int:
     if args.command == "list-models":
         show_models(args.provider)
         return 0
+
+    if args.command == "list-scenarios":
+        table = Table(title="Built-in Evaluation Scenarios")
+        table.add_column("ID")
+        table.add_column("Title")
+        for scenario in list_scenarios():
+            table.add_row(scenario["id"], scenario["title"])
+        console.print(table)
+        return 0
+
+    if args.command == "inspect-run":
+        return inspect_run(args.run_id, args.output_dir)
+
+    if args.command == "eval":
+        if args.live and not get_api_key_for_provider(args.provider):
+            expected_envs = " 或 ".join(PROVIDER_API_KEY_ENVS.get(args.provider, ()))
+            error_console.print("[red][ERR] live 评测缺少 API 密钥。[/red]")
+            error_console.print(f"请在 .env 文件中设置 {expected_envs}")
+            return 2
+        return execute_evaluation(args)
 
     config = _create_config_from_args(args)
 

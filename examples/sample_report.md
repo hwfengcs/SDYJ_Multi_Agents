@@ -14,17 +14,26 @@ benchmarks that inspect the final answer and the intermediate trace.
 ## Key Findings
 
 - Task success alone is not enough; a research agent also needs source coverage
-  and citation quality checks.
+  and citation quality checks. [E1]
 - Human-in-the-loop approval is valuable when the system is planning broad or
-  ambiguous research tasks.
+  ambiguous research tasks. [E2]
 - Tool-call traces make debugging possible and provide strong engineering
-  signals for open-source users and hiring reviewers.
+  signals for open-source users and hiring reviewers. [E3]
+
+## Source Overview
+
+| Source | Searches | Results | Errors |
+| --- | ---: | ---: | ---: |
+| tavily | 1 | 2 | 0 |
+| arxiv | 1 | 1 | 0 |
+
+Deduplicated evidence items: 3
 
 ## Sources
 
-1. LangGraph documentation
-2. Model Context Protocol documentation
-3. OpenAI Agents SDK documentation
+1. [E1] LangGraph documentation - query: `agent evaluation trace evidence`
+2. [E2] Model Context Protocol documentation - query: `mcp tool reliability`
+3. [E3] OpenAI Agents SDK tracing documentation - query: `agent tracing tool calls`
 
 ## Notes
 

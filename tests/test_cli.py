@@ -25,10 +25,16 @@ def test_parse_direct_query_backwards_compatible():
 def test_parse_utility_commands_without_api_key():
     models = parse_args(["list-models", "deepseek"])
     info = parse_args(["config-info"])
+    inspect = parse_args(["inspect-run", "abc123"])
+    eval_args = parse_args(["eval", "--max-scenarios", "1"])
 
     assert models.command == "list-models"
     assert models.provider == "deepseek"
     assert info.command == "config-info"
+    assert inspect.command == "inspect-run"
+    assert inspect.run_id == "abc123"
+    assert eval_args.command == "eval"
+    assert eval_args.max_scenarios == 1
 
 
 def test_get_api_key_accepts_provider_aliases(monkeypatch):

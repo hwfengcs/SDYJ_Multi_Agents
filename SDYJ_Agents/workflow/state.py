@@ -19,11 +19,14 @@ class ResearchState(TypedDict):
     research_plan: Optional[dict]
     plan_approved: bool
     research_results: Annotated[list, operator.add]  # Accumulates results
+    evidence_items: Annotated[list, operator.add]  # Deduplicated source evidence
     current_task: Optional[dict]
     iteration_count: int
     max_iterations: int
     estimated_iterations: int
     final_report: Optional[str]
+    report_metrics: Optional[dict]
+    trace: Optional[dict]
     current_step: str
     needs_more_research: bool
     user_feedback: Optional[str]
@@ -72,3 +75,21 @@ class IndividualResult(TypedDict):
     snippet: str  # Result snippet/summary
     relevance_score: Optional[float]  # Relevance score
     metadata: Optional[dict]  # Additional metadata
+
+
+class EvidenceItem(TypedDict):
+    """
+    Deduplicated, source-grounded evidence item used for report citations.
+    """
+    evidence_id: str
+    task_id: Optional[int]
+    query: Optional[str]
+    source: str
+    title: str
+    url: Optional[str]
+    normalized_url: Optional[str]
+    domain: Optional[str]
+    snippet: str
+    relevance_score: Optional[float]
+    published_date: Optional[str]
+    metadata: Optional[dict]

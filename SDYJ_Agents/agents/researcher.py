@@ -5,6 +5,7 @@ This module implements the Researcher agent, which is responsible for
 executing information retrieval tasks.
 """
 
+import time
 from typing import Dict, List, Optional
 from ..workflow.state import ResearchState, SubTask, SearchResult
 from ..tools.tavily_search import TavilySearch
@@ -12,6 +13,8 @@ from ..tools.arxiv_search import ArxivSearch
 from ..tools.mcp_client import MCPClient
 from ..llm.base import BaseLLM
 from ..prompts.loader import PromptLoader
+from ..utils.evidence import merge_evidence_items, normalize_search_batch
+from ..utils.tracing import record_tool_call
 
 
 class Researcher:
@@ -64,16 +67,45 @@ class Researcher:
         # Execute searches for each query
         for query in task.get('search_queries', []):
             for source in task.get('sources', []):
+                started = time.perf_counter()
                 result = self._search(query, source)
+                latency_ms = int(round((time.perf_counter() - started) * 1000))
                 if result:
                     result['task_id'] = task['task_id']
+                    result['latency_ms'] = latency_ms
                     results.append(result)
+                    record_tool_call(
+                        state.get('trace'),
+                        source=result.get('source', source),
+                        query=query,
+                        task_id=task.get('task_id'),
+                        latency_ms=latency_ms,
+                        result_count=len(result.get('results', [])),
+                        error=result.get('error'),
+                    )
+                else:
+                    record_tool_call(
+                        state.get('trace'),
+                        source=source,
+                        query=query,
+                        task_id=task.get('task_id'),
+                        latency_ms=latency_ms,
+                        result_count=0,
+                        error="source unavailable or unsupported",
+                    )
 
         # Add results to state
         if 'research_results' not in state:
             state['research_results'] = []
 
         state['research_results'].extend(results)
+        evidence_items = state.get('evidence_items') or []
+        for result in results:
+            evidence_items = merge_evidence_items(
+                evidence_items,
+                normalize_search_batch(result),
+            )
+        state['evidence_items'] = evidence_items
 
         # Mark task as completed
         if state.get('research_plan'):
