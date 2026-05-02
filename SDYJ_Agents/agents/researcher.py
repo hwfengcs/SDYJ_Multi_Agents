@@ -95,6 +95,7 @@ class Researcher:
         Returns:
             Search results or None
         """
+        source = source.lower().strip()
         try:
             if source == 'tavily' and self.tavily:
                 return self.tavily.search(query)

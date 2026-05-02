@@ -40,6 +40,15 @@ class Config(BaseModel):
     workflow: WorkflowConfig
 
 
+def _get_env_with_aliases(*names: str) -> Optional[str]:
+    """Return the first non-empty environment variable value from aliases."""
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value
+    return None
+
+
 def load_config_from_env() -> Config:
     """
     Load configuration from environment variables.
@@ -53,19 +62,24 @@ def load_config_from_env() -> Config:
     # Get LLM provider and determine API key
     llm_provider = os.getenv("LLM_PROVIDER", "deepseek").lower()
 
-    # Map provider to API key environment variable
+    # Map provider to API key environment variables. The first name is the
+    # canonical one documented by the provider; later names are compatibility
+    # aliases kept for older local .env files.
     api_key_map = {
-        "openai": "OPENAI_API_KEY",
-        "claude": "ANTHROPIC_API_KEY",
-        "gemini": "GOOGLE_API_KEY",
-        "deepseek": "DEEPSEEK_API_KEY"
+        "openai": ("OPENAI_API_KEY",),
+        "claude": ("ANTHROPIC_API_KEY", "CLAUDE_API_KEY"),
+        "gemini": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+        "deepseek": ("DEEPSEEK_API_KEY",)
     }
 
-    api_key_env = api_key_map.get(llm_provider, "OPENAI_API_KEY")
-    llm_api_key = os.getenv(api_key_env)
+    api_key_envs = api_key_map.get(llm_provider, ("OPENAI_API_KEY",))
+    llm_api_key = _get_env_with_aliases(*api_key_envs)
 
     if not llm_api_key:
-        raise ValueError(f"API key not found for {llm_provider}. Please set {api_key_env} in .env file")
+        expected = " or ".join(api_key_envs)
+        raise ValueError(
+            f"API key not found for {llm_provider}. Please set {expected} in .env file"
+        )
 
     # Create LLM config
     llm_config = LLMConfig(

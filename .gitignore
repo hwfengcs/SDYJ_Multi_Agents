@@ -230,6 +230,7 @@ logs/
 
 # 测试输出
 test_output/
+outputs/
 test_*.txt
 demo*.txt
 random*.txt

@@ -106,7 +106,7 @@ class MCPClient:
                 )
                 response.raise_for_status()
                 return response.json().get('tools', [])
-        except Exception as e:
+        except Exception:
             return []
 
     async def execute_tool(

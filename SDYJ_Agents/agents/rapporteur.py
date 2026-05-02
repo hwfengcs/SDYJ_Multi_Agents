@@ -196,6 +196,10 @@ class Rapporteur:
         sections.append("\n## 深度分析\n")
         sections.append(self._generate_synthesized_analysis(query, summary, organized_info, results))
 
+        # Source overview
+        sections.append("\n## 来源概览\n")
+        sections.append(self._format_source_overview(results))
+
         # References
         sections.append("\n## 参考资料\n")
         sections.append(self._format_citations(results))
@@ -239,6 +243,44 @@ class Rapporteur:
 
         return '\n'.join(formatted)
 
+    def _format_source_overview(self, results: List[Dict]) -> str:
+        """
+        Format a compact source overview for report traceability.
+
+        Args:
+            results: Research results
+
+        Returns:
+            Markdown table with source-level counts
+        """
+        if not results:
+            return "未收集到外部来源。"
+
+        stats = {}
+        for result in results:
+            source = result.get('source', 'unknown')
+            if source not in stats:
+                stats[source] = {
+                    'searches': 0,
+                    'items': 0,
+                    'errors': 0,
+                }
+            stats[source]['searches'] += 1
+            stats[source]['items'] += len(result.get('results', []))
+            if result.get('error'):
+                stats[source]['errors'] += 1
+
+        lines = [
+            "| Source | Searches | Results | Errors |",
+            "| --- | ---: | ---: | ---: |",
+        ]
+        for source, item in sorted(stats.items()):
+            lines.append(
+                f"| {source} | {item['searches']} | {item['items']} | {item['errors']} |"
+            )
+
+        return '\n'.join(lines)
+
     def _format_citations(self, results: List[Dict]) -> str:
         """
         Format citations and references.
@@ -251,12 +293,17 @@ class Rapporteur:
         """
         citations = []
         citation_num = 1
+        seen = set()
 
         for result in results:
             for item in result.get('results', []):
                 title = item.get('title', 'Untitled')
                 url = item.get('url', '')
                 source = result.get('source', 'Unknown')
+                key = url or f"{source}:{title}"
+                if key in seen:
+                    continue
+                seen.add(key)
 
                 if url:
                     citations.append(f"{citation_num}. {title} - {source.capitalize()} - [{url}]({url})")

@@ -3,7 +3,8 @@ Gemini LLM Implementation
 """
 
 from typing import Iterator
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from .base import BaseLLM
 
 
@@ -24,8 +25,19 @@ class GeminiLLM(BaseLLM):
             **kwargs: Additional configuration
         """
         super().__init__(api_key, model, **kwargs)
-        genai.configure(api_key=api_key)
-        self.client = genai.GenerativeModel(model)
+        self.client = genai.Client(api_key=api_key)
+
+    def _build_config(self, params: dict) -> types.GenerateContentConfig | None:
+        """Translate common generation parameters to Gemini config."""
+        config = {}
+        if "temperature" in params:
+            config["temperature"] = params.pop("temperature")
+        if "max_tokens" in params:
+            config["max_output_tokens"] = params.pop("max_tokens")
+        if "max_output_tokens" in params:
+            config["max_output_tokens"] = params.pop("max_output_tokens")
+
+        return types.GenerateContentConfig(**config) if config else None
 
     def generate(self, prompt: str, **kwargs) -> str:
         """
@@ -41,7 +53,15 @@ class GeminiLLM(BaseLLM):
         # Merge default config with kwargs
         params = {**self.config, **kwargs}
 
-        response = self.client.generate_content(prompt, **params)
+        config = self._build_config(params)
+        request = {
+            "model": self.model,
+            "contents": prompt,
+        }
+        if config:
+            request["config"] = config
+
+        response = self.client.models.generate_content(**request)
         return response.text
 
     def stream_generate(self, prompt: str, **kwargs) -> Iterator[str]:
@@ -58,7 +78,15 @@ class GeminiLLM(BaseLLM):
         # Merge default config with kwargs
         params = {**self.config, **kwargs}
 
-        response = self.client.generate_content(prompt, stream=True, **params)
+        config = self._build_config(params)
+        request = {
+            "model": self.model,
+            "contents": prompt,
+        }
+        if config:
+            request["config"] = config
+
+        response = self.client.models.generate_content_stream(**request)
 
         for chunk in response:
             if chunk.text:

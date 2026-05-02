@@ -73,20 +73,20 @@ console = Console()
 
 
 def print_success(message: str):
-    console.print(f"[green]✓[/green] {message}")
+    console.print(f"[green][OK][/green] {message}")
 
 
 def print_error(message: str):
-    console.print(f"[red]✗[/red] {message}")
+    console.print(f"[red][ERR][/red] {message}")
 
 
 def print_warning(message: str):
-    console.print(f"[yellow]⚠[/yellow] {message}")
+    console.print(f"[yellow][WARN][/yellow] {message}")
 
 
 def print_info(message: str):
-    console.print(f"[blue]ℹ[/blue] {message}")
+    console.print(f"[blue][INFO][/blue] {message}")
 
 
 def print_step(message: str):
-    console.print(f"[cyan]▶[/cyan] {message}")
+    console.print(f"[cyan]>[/cyan] {message}")

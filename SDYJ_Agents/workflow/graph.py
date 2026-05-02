@@ -7,7 +7,6 @@ This module creates and manages the LangGraph workflow for the research system.
 from typing import Optional
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import MemorySaver
-from .state import ResearchState
 from .nodes import WorkflowNodes
 from ..agents.coordinator import Coordinator
 from ..agents.planner import Planner
@@ -311,9 +310,6 @@ class ResearchWorkflow:
             Path to the visualization file or visualization string
         """
         try:
-            # Try to get graph visualization
-            from langgraph.graph import Graph
-
             mermaid = self.graph.get_graph().draw_mermaid()
 
             if output_path:

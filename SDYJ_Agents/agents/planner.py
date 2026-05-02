@@ -6,7 +6,7 @@ creating and managing research plans.
 """
 
 import json
-from typing import Dict, List, Optional
+from typing import Optional
 from ..workflow.state import ResearchState, PlanStructure, SubTask
 from ..llm.base import BaseLLM
 from ..prompts.loader import PromptLoader
@@ -76,12 +76,13 @@ class Planner:
 
             # Update state
             state['research_plan'] = plan
-            state['max_iterations'] = plan.get('estimated_iterations', 3)
+            state['estimated_iterations'] = plan.get('estimated_iterations', 3)
 
         except json.JSONDecodeError:
             # Create fallback plan
             plan = self._create_fallback_plan(query)
             state['research_plan'] = plan
+            state['estimated_iterations'] = plan.get('estimated_iterations', 2)
 
         return state
 
@@ -221,10 +222,10 @@ class Planner:
             Formatted plan string
         """
         output = []
-        output.append(f"=Ë Research Goal: {plan.get('research_goal', 'N/A')}")
-        output.append(f"\n=Ê Estimated Iterations: {plan.get('estimated_iterations', 'N/A')}")
-        output.append(f"\n Completion Criteria: {plan.get('completion_criteria', 'N/A')}")
-        output.append("\n\n=Ý Subtasks:")
+        output.append(f"Research Goal: {plan.get('research_goal', 'N/A')}")
+        output.append(f"\nEstimated Iterations: {plan.get('estimated_iterations', 'N/A')}")
+        output.append(f"\nCompletion Criteria: {plan.get('completion_criteria', 'N/A')}")
+        output.append("\n\nSubtasks:")
 
         for task in plan.get('sub_tasks', []):
             output.append(f"\n  {task['task_id']}. {task['description']}")

@@ -4,8 +4,8 @@ Research Workflow State Definition
 This module defines the state structure for the research workflow.
 """
 
-from typing import TypedDict, List, Annotated, Optional, Any
 import operator
+from typing import Annotated, List, Optional, TypedDict
 
 
 # Define state with Annotated fields for LangGraph
@@ -22,6 +22,7 @@ class ResearchState(TypedDict):
     current_task: Optional[dict]
     iteration_count: int
     max_iterations: int
+    estimated_iterations: int
     final_report: Optional[str]
     current_step: str
     needs_more_research: bool

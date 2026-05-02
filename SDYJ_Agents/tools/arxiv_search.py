@@ -4,7 +4,7 @@ arXiv Search Tool
 This module provides academic paper search functionality using arXiv API.
 """
 
-from typing import List, Dict, Optional
+from typing import Dict, Optional
 import arxiv
 from datetime import datetime
 
@@ -110,7 +110,7 @@ class ArxivSearch:
                 'categories': paper.categories
             }
 
-        except Exception as e:
+        except Exception:
             return None
 
     def download_pdf(self, paper_id: str, dirpath: str = "./") -> Optional[str]:
@@ -129,5 +129,5 @@ class ArxivSearch:
             paper = next(self.client.results(search))
             filepath = paper.download_pdf(dirpath=dirpath)
             return filepath
-        except Exception as e:
+        except Exception:
             return None

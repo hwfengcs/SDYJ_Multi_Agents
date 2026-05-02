@@ -1,14 +1,10 @@
-# LangChain and LangGraph
+# Workflow engine
 langgraph>=0.2.0
-langchain>=0.3.0
-langchain-openai>=0.2.0
-langchain-anthropic>=0.2.0
-langchain-google-genai>=2.0.0
 
 # LLM Providers
 openai>=1.50.0
 anthropic>=0.39.0
-google-generativeai>=0.8.0
+google-genai>=1.0.0
 
 # Search Tools
 tavily-python>=0.5.0

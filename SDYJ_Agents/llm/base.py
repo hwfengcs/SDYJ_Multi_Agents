@@ -5,7 +5,7 @@ This module defines the abstract base class for all LLM providers.
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any, Iterator
+from typing import Iterator
 
 
 class BaseLLM(ABC):

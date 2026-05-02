@@ -94,7 +94,7 @@ class LLMFactory:
             elif provider == 'deepseek':
                 from .deepseek_llm import DeepSeekLLM
                 cls.register_provider('deepseek', DeepSeekLLM)
-        except ImportError as e:
+        except ImportError:
             # Provider module not available
             pass
 

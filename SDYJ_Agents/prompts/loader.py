@@ -4,9 +4,8 @@ Prompt Loader
 This module provides functionality to load and render prompt templates.
 """
 
-import os
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any
 from datetime import datetime
 from jinja2 import Environment, FileSystemLoader, Template
 
@@ -66,7 +65,7 @@ class PromptLoader:
         except Exception as e:
             raise FileNotFoundError(
                 f"Could not load prompt '{prompt_name}' from {self.prompts_dir}: {e}"
-            )
+            ) from e
 
     def load_raw(self, prompt_name: str) -> str:
         """

@@ -5,7 +5,7 @@ This module implements the Coordinator agent, which serves as the entry point
 and orchestrator for the research workflow.
 """
 
-from typing import Dict, Optional, Any
+from typing import Any, Dict
 from ..llm.base import BaseLLM
 from ..prompts.loader import PromptLoader
 
@@ -103,6 +103,7 @@ class Coordinator:
             'current_task': None,
             'iteration_count': 0,
             'max_iterations': 5,  # Default maximum iterations
+            'estimated_iterations': 0,
             'final_report': None,
             'current_step': 'initializing',
             'needs_more_research': True,

@@ -31,6 +31,7 @@ from ..agents.rapporteur import Rapporteur
 from ..workflow.graph import ResearchWorkflow
 
 console = Console()
+error_console = Console(stderr=True)
 
 
 @dataclass
@@ -48,6 +49,27 @@ class CLIConfig:
 # 配置文件路径
 CONFIG_FILE = Path(__file__).parent.parent.parent / "config.json"
 
+PROVIDER_DEFAULT_MODELS = {
+    "deepseek": "deepseek-chat",
+    "openai": "gpt-4o-mini",
+    "claude": "claude-3-5-sonnet-20241022",
+    "gemini": "gemini-1.5-pro",
+}
+
+PROVIDER_API_KEY_ENVS = {
+    "deepseek": ("DEEPSEEK_API_KEY",),
+    "openai": ("OPENAI_API_KEY",),
+    "claude": ("ANTHROPIC_API_KEY", "CLAUDE_API_KEY"),
+    "gemini": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+}
+
+PROVIDER_MODELS = {
+    "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini"],
+    "claude": ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
+    "gemini": ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-pro"],
+    "deepseek": ["deepseek-chat", "deepseek-coder"],
+}
+
 
 def load_config_from_file() -> Dict[str, Any]:
     """从配置文件加载设置"""
@@ -56,7 +78,7 @@ def load_config_from_file() -> Dict[str, Any]:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
-            console.print(f"[yellow]⚠ 配置文件加载失败：{e}，使用默认设置[/yellow]")
+            console.print(f"[yellow][WARN] 配置文件加载失败：{e}，使用默认设置[/yellow]")
     return {}
 
 
@@ -74,21 +96,18 @@ def save_config_to_file(config: CLIConfig) -> None:
         }
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config_data, f, indent=2, ensure_ascii=False)
-        console.print("[green]✓ 配置已保存[/green]")
+        console.print("[green][OK] 配置已保存[/green]")
     except Exception as e:
-        console.print(f"[red]✗ 配置保存失败：{e}[/red]")
+        console.print(f"[red][ERR] 配置保存失败：{e}[/red]")
 
 
 def get_api_key_for_provider(provider: str) -> str | None:
     """根据提供商获取对应的 API 密钥"""
-    provider_env_map = {
-        "deepseek": "DEEPSEEK_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "claude": "CLAUDE_API_KEY",
-        "gemini": "GEMINI_API_KEY",
-    }
-    env_var = provider_env_map.get(provider.lower())
-    return os.getenv(env_var) if env_var else None
+    for env_var in PROVIDER_API_KEY_ENVS.get(provider.lower(), ()):
+        api_key = os.getenv(env_var)
+        if api_key:
+            return api_key
+    return None
 
 
 def print_separator(char: str = "─", length: int = 70) -> None:
@@ -112,9 +131,9 @@ def print_welcome() -> None:
 
     # 显示配置文件状态
     if CONFIG_FILE.exists():
-        console.print(f"[green]✓ 已加载配置文件: {CONFIG_FILE.name}[/green]")
+        console.print(f"[green][OK] 已加载配置文件: {CONFIG_FILE.name}[/green]")
     else:
-        console.print("[cyan]ℹ 使用默认配置 (max_iterations=5, auto_approve=False)[/cyan]")
+        console.print("[cyan][INFO] 使用默认配置 (max_iterations=5, auto_approve=False)[/cyan]")
     console.print()
 
 
@@ -131,18 +150,30 @@ def print_menu() -> None:
 
 def show_models(provider: str) -> None:
     """显示可用模型列表"""
-    models = {
-        'openai': ['gpt-4', 'gpt-4-turbo', 'gpt-3.5-turbo'],
-        'claude': ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-sonnet-20240229'],
-        'gemini': ['gemini-pro', 'gemini-1.5-pro'],
-        'deepseek': ['deepseek-chat', 'deepseek-coder']
-    }
-
     print_separator("-")
     console.print(f"\n[bold cyan]{provider.upper()} 的可用模型：[/bold cyan]\n")
 
-    for model in models.get(provider, []):
-        console.print(f"  • {model}")
+    for model in PROVIDER_MODELS.get(provider, []):
+        console.print(f"  - {model}")
+    console.print()
+    print_separator("-")
+
+
+def print_config_info(config: CLIConfig) -> None:
+    """显示当前 CLI 配置和密钥状态。"""
+    print_separator("-")
+    console.print("[bold cyan]当前配置：[/bold cyan]\n")
+    console.print(f"  提供商：[yellow]{config.provider}[/yellow]")
+    console.print(f"  模型：[yellow]{config.model}[/yellow]")
+    console.print(f"  最大迭代次数：[yellow]{config.max_iterations}[/yellow]")
+    console.print(f"  自动批准：[yellow]{'是' if config.auto_approve else '否'}[/yellow]")
+    console.print(f"  输出目录：[yellow]{config.output_dir}[/yellow]")
+    console.print(f"  输出格式：[yellow]{config.output_format.upper()}[/yellow]")
+    console.print(f"  显示步骤：[yellow]{'是' if config.show_steps else '否'}[/yellow]")
+
+    key_status = "已配置" if get_api_key_for_provider(config.provider) else "未配置"
+    env_names = ", ".join(PROVIDER_API_KEY_ENVS.get(config.provider, ()))
+    console.print(f"  API Key：[yellow]{key_status}[/yellow] ({env_names})")
     console.print()
     print_separator("-")
 
@@ -171,29 +202,23 @@ def configure_settings(config: CLIConfig) -> None:
             # 检查 API 密钥
             new_api_key = get_api_key_for_provider(provider_input)
             if not new_api_key:
-                console.print(f"[red]✗ 未找到 {provider_input.upper()}_API_KEY 环境变量[/red]")
+                console.print(f"[red][ERR] 未找到 {provider_input.upper()}_API_KEY 环境变量[/red]")
                 console.print(f"[yellow]请在 .env 文件中配置 {provider_input.upper()}_API_KEY[/yellow]")
             else:
                 config.provider = provider_input
                 # 自动更新默认模型
-                model_defaults = {
-                    'deepseek': 'deepseek-chat',
-                    'openai': 'gpt-4',
-                    'claude': 'claude-3-5-sonnet-20241022',
-                    'gemini': 'gemini-pro'
-                }
-                config.model = model_defaults.get(provider_input, config.model)
+                config.model = PROVIDER_DEFAULT_MODELS.get(provider_input, config.model)
                 config_changed = True
-                console.print(f"[green]✓ 已更新提供商为 {provider_input}，模型自动调整为 {config.model}[/green]")
+                console.print(f"[green][OK] 已更新提供商为 {provider_input}，模型自动调整为 {config.model}[/green]")
     elif provider_input and provider_input not in ["deepseek", "openai", "claude", "gemini"]:
-        console.print("[red]✗ 无效的提供商[/red]")
+        console.print("[red][ERR] 无效的提供商[/red]")
 
     # 修改模型
     model_input = input(f"模型名称 [{config.model}]: ").strip()
     if model_input:
         config.model = model_input
         config_changed = True
-        console.print(f"[green]✓ 已更新模型为 {model_input}[/green]")
+        console.print(f"[green][OK] 已更新模型为 {model_input}[/green]")
 
     # 修改最大迭代次数
     try:
@@ -203,11 +228,11 @@ def configure_settings(config: CLIConfig) -> None:
             if new_max_iter > 0:
                 config.max_iterations = new_max_iter
                 config_changed = True
-                console.print(f"[green]✓ 已更新最大迭代次数为 {new_max_iter}[/green]")
+                console.print(f"[green][OK] 已更新最大迭代次数为 {new_max_iter}[/green]")
             else:
-                console.print("[red]✗ 最大迭代次数必须大于 0[/red]")
+                console.print("[red][ERR] 最大迭代次数必须大于 0[/red]")
     except ValueError:
-        console.print("[red]✗ 无效的数字[/red]")
+        console.print("[red][ERR] 无效的数字[/red]")
 
     # 修改自动批准
     auto_approve_input = input(f"自动批准计划 (y/n) [{'y' if config.auto_approve else 'n'}]: ").strip().lower()
@@ -215,19 +240,19 @@ def configure_settings(config: CLIConfig) -> None:
         if not config.auto_approve:
             config.auto_approve = True
             config_changed = True
-        console.print("[green]✓ 已启用自动批准[/green]")
+        console.print("[green][OK] 已启用自动批准[/green]")
     elif auto_approve_input in ['n', 'no', '否']:
         if config.auto_approve:
             config.auto_approve = False
             config_changed = True
-        console.print("[green]✓ 已禁用自动批准[/green]")
+        console.print("[green][OK] 已禁用自动批准[/green]")
 
     # 修改输出目录
     output_dir_input = input(f"输出目录 [{config.output_dir}]: ").strip()
     if output_dir_input:
         config.output_dir = output_dir_input
         config_changed = True
-        console.print(f"[green]✓ 已更新输出目录为 {output_dir_input}[/green]")
+        console.print(f"[green][OK] 已更新输出目录为 {output_dir_input}[/green]")
 
     # 修改输出格式
     output_format_input = input(f"输出格式 (markdown/html) [{config.output_format}]: ").strip().lower()
@@ -237,9 +262,9 @@ def configure_settings(config: CLIConfig) -> None:
         if normalized_format != config.output_format:
             config.output_format = normalized_format
             config_changed = True
-            console.print(f"[green]✓ 已更新输出格式为 {normalized_format.upper()}[/green]")
+            console.print(f"[green][OK] 已更新输出格式为 {normalized_format.upper()}[/green]")
     elif output_format_input:
-        console.print("[red]✗ 无效的输出格式，请选择 markdown 或 html[/red]")
+        console.print("[red][ERR] 无效的输出格式，请选择 markdown 或 html[/red]")
 
     # 修改显示步骤
     show_steps_input = input(f"显示步骤 (y/n) [{'y' if config.show_steps else 'n'}]: ").strip().lower()
@@ -247,12 +272,12 @@ def configure_settings(config: CLIConfig) -> None:
         if not config.show_steps:
             config.show_steps = True
             config_changed = True
-        console.print("[green]✓ 已启用显示步骤[/green]")
+        console.print("[green][OK] 已启用显示步骤[/green]")
     elif show_steps_input in ['n', 'no', '否']:
         if config.show_steps:
             config.show_steps = False
             config_changed = True
-        console.print("[green]✓ 已禁用显示步骤[/green]")
+        console.print("[green][OK] 已禁用显示步骤[/green]")
 
     # 保存配置
     if config_changed:
@@ -288,7 +313,7 @@ def human_approval_callback(state: Dict[str, Any]) -> Tuple[bool, str]:
 
     if choice == "1":
         # 批准计划
-        console.print("[green]✓ 计划已批准，开始研究...[/green]\n")
+        console.print("[green][OK] 计划已批准，开始研究...[/green]\n")
         print_separator("=")
         return True, None
 
@@ -303,7 +328,7 @@ def human_approval_callback(state: Dict[str, Any]) -> Tuple[bool, str]:
             console.print("[yellow]未提供反馈，将重新生成计划...[/yellow]")
             feedback = "请重新优化研究计划"
 
-        console.print(f"\n[cyan]已收到反馈，正在重新制定计划...[/cyan]\n")
+        console.print("\n[cyan]已收到反馈，正在重新制定计划...[/cyan]\n")
         print_separator("=")
         return False, feedback
 
@@ -327,20 +352,17 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
         query = input("请输入研究问题：\n> ").strip()
 
     if not query:
-        console.print("[red]✗ 研究问题不能为空[/red]")
+        console.print("[red][ERR] 研究问题不能为空[/red]")
         return
 
     try:
         # Setup logger
         logger = setup_logger()
 
-        # Load config from env
+        # Load config from env after applying CLI overrides.
         console.print("\n[dim]正在加载配置...[/dim]")
-        env_cfg = load_config_from_env()
-
-        # Override with CLI config
         os.environ['LLM_PROVIDER'] = config.provider
-        env_cfg = load_config_from_env()  # Reload
+        env_cfg = load_config_from_env()
         env_cfg.llm.model = config.model
         env_cfg.workflow.max_iterations = config.max_iterations
         env_cfg.workflow.auto_approve_plan = config.auto_approve
@@ -430,7 +452,7 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
 
                 elif step == 'awaiting_approval':
                     if config.auto_approve:
-                        console.print("[green]✓ 计划已自动批准[/green]")
+                        console.print("[green][OK] 计划已自动批准[/green]")
                     # Interactive approval is handled by the callback in stream_interactive
 
                 elif step == 'researching':
@@ -465,13 +487,13 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
             output_path = output_dir / f"research_report_{timestamp}.{file_extension}"
 
             rapporteur.save_report(report, str(output_path))
-            console.print(f"\n[green]✓ 报告已保存至：{output_path}[/green]")
+            console.print(f"\n[green][OK] 报告已保存至：{output_path}[/green]")
 
         elif current_state and current_state.get('simple_response'):
             # Simple query was handled, no need to show error
             pass
         else:
-            console.print("[red]✗ 研究未成功完成[/red]")
+            console.print("[red][ERR] 研究未成功完成[/red]")
 
         print_separator("-")
 
@@ -479,7 +501,7 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
         console.print("\n\n[yellow]任务已被用户中断[/yellow]")
         print_separator("-")
     except Exception as e:
-        console.print(f"\n[red]✗ 发生错误：{e}[/red]")
+        console.print(f"\n[red][ERR] 发生错误：{e}[/red]")
         logger.exception("Research error")
         print_separator("-")
 
@@ -513,7 +535,7 @@ def interactive_mode(config: CLIConfig) -> int:
                     if provider:
                         show_models(provider)
                     else:
-                        console.print("[red]✗ 无效的选择[/red]")
+                        console.print("[red][ERR] 无效的选择[/red]")
 
                 elif choice == "3":
                     # 配置设置
@@ -521,17 +543,7 @@ def interactive_mode(config: CLIConfig) -> int:
 
                 elif choice == "4":
                     # 查看当前配置
-                    print_separator("-")
-                    console.print("[bold cyan]当前配置：[/bold cyan]\n")
-                    console.print(f"  提供商：[yellow]{config.provider}[/yellow]")
-                    console.print(f"  模型：[yellow]{config.model}[/yellow]")
-                    console.print(f"  最大迭代次数：[yellow]{config.max_iterations}[/yellow]")
-                    console.print(f"  自动批准：[yellow]{'是' if config.auto_approve else '否'}[/yellow]")
-                    console.print(f"  输出目录：[yellow]{config.output_dir}[/yellow]")
-                    console.print(f"  输出格式：[yellow]{config.output_format.upper()}[/yellow]")
-                    console.print(f"  显示步骤：[yellow]{'是' if config.show_steps else '否'}[/yellow]")
-                    console.print()
-                    print_separator("-")
+                    print_config_info(config)
 
                 elif choice == "5":
                     # 退出程序
@@ -539,7 +551,7 @@ def interactive_mode(config: CLIConfig) -> int:
                     return 0
 
                 else:
-                    console.print("[red]✗ 无效的选择，请输入 1-5[/red]")
+                    console.print("[red][ERR] 无效的选择，请输入 1-5[/red]")
 
             except KeyboardInterrupt:
                 console.print("\n\n[yellow]感谢使用！再见！[/yellow]\n")
@@ -548,10 +560,10 @@ def interactive_mode(config: CLIConfig) -> int:
                 console.print("\n\n[yellow]感谢使用！再见！[/yellow]\n")
                 return 0
             except Exception as e:
-                console.print(f"\n[red]✗ 发生错误：{e}[/red]\n")
+                console.print(f"\n[red][ERR] 发生错误：{e}[/red]\n")
 
     except Exception as e:
-        console.print(f"\n[red]✗ 系统错误：{e}[/red]\n")
+        console.print(f"\n[red][ERR] 系统错误：{e}[/red]\n")
         return 1
 
 
@@ -561,23 +573,12 @@ def run_single_task(config: CLIConfig, query: str) -> int:
         execute_research(config, query)
         return 0
     except Exception as e:
-        console.print(f"[red]✗ 错误：{e}[/red]", file=sys.stderr)
+        error_console.print(f"[red][ERR] 错误：{e}[/red]")
         return 1
 
 
-def parse_args(argv: Any) -> argparse.Namespace:
-    """解析命令行参数"""
-    # 先加载配置文件中的默认值
-    saved_config = load_config_from_file()
-
-    parser = argparse.ArgumentParser(
-        description="SDYJ 深度研究系统 - 基于 LangGraph 的多智能体研究系统"
-    )
-    parser.add_argument(
-        "query",
-        nargs="?",
-        help="研究问题或主题（可选，不提供则进入交互模式）"
-    )
+def _add_runtime_options(parser: argparse.ArgumentParser, saved_config: Dict[str, Any]) -> None:
+    """Add shared options used by research and interactive modes."""
     parser.add_argument(
         "--provider",
         default=saved_config.get("provider", "deepseek"),
@@ -618,44 +619,14 @@ def parse_args(argv: Any) -> argparse.Namespace:
         default=saved_config.get("show_steps", False),
         help="显示详细执行步骤"
     )
-    parser.add_argument(
-        "--interactive",
-        action="store_true",
-        help="启动交互式菜单模式"
-    )
-    parser.add_argument(
-        "--version",
-        action="version",
-        version="SDYJ Deep Research System 0.1.0"
-    )
-
-    return parser.parse_args(argv)
 
 
-def main(argv: Any = None) -> int:
-    """主入口函数"""
-    load_dotenv()
-    args = parse_args(argv if argv is not None else sys.argv[1:])
+def _create_config_from_args(args: argparse.Namespace) -> CLIConfig:
+    """Create CLIConfig from parsed args and provider defaults."""
+    if not getattr(args, "model", None):
+        args.model = PROVIDER_DEFAULT_MODELS.get(args.provider, "deepseek-chat")
 
-    # 检查 API 密钥
-    api_key = get_api_key_for_provider(args.provider)
-    if not api_key:
-        console.print(f"[red]✗ 缺少 API 密钥。[/red]", file=sys.stderr)
-        console.print(f"请在 .env 文件中设置 {args.provider.upper()}_API_KEY", file=sys.stderr)
-        return 2
-
-    # 如果没有指定模型，使用默认模型
-    if not args.model:
-        model_defaults = {
-            'deepseek': 'deepseek-chat',
-            'openai': 'gpt-4',
-            'claude': 'claude-3-5-sonnet-20241022',
-            'gemini': 'gemini-pro'
-        }
-        args.model = model_defaults.get(args.provider, 'deepseek-chat')
-
-    # 创建配置
-    config = CLIConfig(
+    return CLIConfig(
         provider=args.provider,
         model=args.model,
         max_iterations=args.max_iterations,
@@ -665,12 +636,105 @@ def main(argv: Any = None) -> int:
         output_format=args.output_format,
     )
 
+
+def parse_args(argv: Any) -> argparse.Namespace:
+    """解析命令行参数，兼容直接传 query 和显式子命令。"""
+    saved_config = load_config_from_file()
+    argv = list(argv or [])
+
+    root_parser = argparse.ArgumentParser(
+        description="SDYJ 深度研究系统 - 基于 LangGraph 的多智能体研究系统",
+        epilog=(
+            "示例：\n"
+            "  python main.py research \"Transformer 架构最新进展\"\n"
+            "  python main.py \"Transformer 架构最新进展\"\n"
+            "  python main.py list-models deepseek\n"
+            "  python main.py config-info"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    root_parser.add_argument(
+        "--version",
+        action="version",
+        version="SDYJ Deep Research System 0.1.0"
+    )
+
+    if argv and argv[0] in {"-h", "--help", "--version"}:
+        root_parser.parse_args(argv)
+
+    if argv and argv[0] == "list-models":
+        parser = argparse.ArgumentParser(description="列出指定提供商的可用模型")
+        parser.add_argument(
+            "provider",
+            nargs="?",
+            default=saved_config.get("provider", "deepseek"),
+            choices=["deepseek", "openai", "claude", "gemini"],
+            help="LLM 提供商"
+        )
+        args = parser.parse_args(argv[1:])
+        args.command = "list-models"
+        return args
+
+    if argv and argv[0] == "config-info":
+        parser = argparse.ArgumentParser(description="显示当前配置")
+        _add_runtime_options(parser, saved_config)
+        args = parser.parse_args(argv[1:])
+        args.command = "config-info"
+        args.query = None
+        args.interactive = False
+        return args
+
+    if argv and argv[0] == "research":
+        argv = argv[1:]
+
+    parser = argparse.ArgumentParser(
+        description="执行深度研究任务，或不提供 query 进入交互模式"
+    )
+    parser.add_argument(
+        "query",
+        nargs="?",
+        help="研究问题或主题（可选，不提供则进入交互模式）"
+    )
+    _add_runtime_options(parser, saved_config)
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="启动交互式菜单模式"
+    )
+    args = parser.parse_args(argv)
+    args.command = "research" if args.query else "interactive"
+    return args
+
+
+def main(argv: Any = None) -> int:
+    """主入口函数"""
+    load_dotenv()
+    args = parse_args(argv if argv is not None else sys.argv[1:])
+
+    if args.command == "list-models":
+        show_models(args.provider)
+        return 0
+
+    config = _create_config_from_args(args)
+
+    if args.command == "config-info":
+        print_config_info(config)
+        return 0
+
+    # 检查 API 密钥
+    api_key = get_api_key_for_provider(config.provider)
+    if not api_key:
+        expected_envs = " 或 ".join(PROVIDER_API_KEY_ENVS.get(config.provider, ()))
+        error_console.print("[red][ERR] 缺少 API 密钥。[/red]")
+        error_console.print(f"请在 .env 文件中设置 {expected_envs}")
+        return 2
+
     # 如果提供了任务参数，直接执行任务
-    if args.query:
+    if args.command == "research" and args.query:
         return run_single_task(config, args.query)
 
     # 如果指定了交互模式或没有提供任务，进入交互式菜单
-    if args.interactive or not args.query:
+    if args.interactive or args.command == "interactive":
         return interactive_mode(config)
 
     return 0
