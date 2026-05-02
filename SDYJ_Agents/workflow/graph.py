@@ -12,6 +12,7 @@ from ..agents.coordinator import Coordinator
 from ..agents.planner import Planner
 from ..agents.researcher import Researcher
 from ..agents.rapporteur import Rapporteur
+from ..utils.tracing import record_decision
 
 
 def create_research_graph(
@@ -147,6 +148,13 @@ class ResearchWorkflow:
         # Initialize state
         initial_state = self.coordinator.initialize_research(query, auto_approve=auto_approve, output_format=output_format)
         if trace:
+            trace.setdefault("config", {}).update(
+                {
+                    "max_iterations": max_iterations,
+                    "auto_approve": auto_approve,
+                    "output_format": output_format,
+                }
+            )
             initial_state['trace'] = trace
 
         if max_iterations:
@@ -182,6 +190,13 @@ class ResearchWorkflow:
         # Initialize state
         initial_state = self.coordinator.initialize_research(query, auto_approve=auto_approve, output_format=output_format)
         if trace:
+            trace.setdefault("config", {}).update(
+                {
+                    "max_iterations": max_iterations,
+                    "auto_approve": auto_approve,
+                    "output_format": output_format,
+                }
+            )
             initial_state['trace'] = trace
 
         if max_iterations:
@@ -219,6 +234,13 @@ class ResearchWorkflow:
         # Initialize state
         initial_state = self.coordinator.initialize_research(query, auto_approve=auto_approve, output_format=output_format)
         if trace:
+            trace.setdefault("config", {}).update(
+                {
+                    "max_iterations": max_iterations,
+                    "auto_approve": auto_approve,
+                    "output_format": output_format,
+                }
+            )
             initial_state['trace'] = trace
 
         if max_iterations:
@@ -247,6 +269,12 @@ class ResearchWorkflow:
                     if auto_approve:
                         current_state['plan_approved'] = True
                         current_state['user_feedback'] = None
+                        record_decision(
+                            current_state.get("trace"),
+                            node="human_review",
+                            decision="plan_auto_approved_at_interrupt",
+                            reason="auto_approve stream interrupt handling",
+                        )
                         self.graph.update_state(config, current_state)
                     # Otherwise, ask user via callback
                     elif human_approval_callback and not current_state.get('plan_approved', False):
@@ -260,9 +288,22 @@ class ResearchWorkflow:
                         if approved:
                             current_state['plan_approved'] = True
                             current_state['user_feedback'] = None
+                            record_decision(
+                                current_state.get("trace"),
+                                node="human_review",
+                                decision="plan_approved",
+                                reason="human callback approved the plan",
+                            )
                         else:
                             current_state['plan_approved'] = False
                             current_state['user_feedback'] = feedback
+                            record_decision(
+                                current_state.get("trace"),
+                                node="human_review",
+                                decision="plan_rejected",
+                                reason="human callback requested revision",
+                                metadata={"feedback": feedback},
+                            )
 
                         # Update graph state
                         self.graph.update_state(config, current_state)

@@ -8,6 +8,58 @@ from typing import Any, Dict, List
 Scenario = Dict[str, Any]
 
 
+DEFAULT_THRESHOLDS = {
+    "overall_score": 0.72,
+    "plan_coverage": 0.70,
+    "section_completeness": 0.80,
+    "citation_id_coverage": 0.70,
+    "tool_success_rate": 0.65,
+    "trace_completeness": 0.80,
+}
+
+
+DEFAULT_EXPECTED_TRACE = {
+    "required_nodes": ["planner", "researcher", "rapporteur"],
+    "required_top_level_fields": [
+        "schema_version",
+        "run_id",
+        "mode",
+        "scenario_id",
+        "created_at",
+        "completed_at",
+        "query",
+        "provider",
+        "model",
+        "nodes",
+        "llm_calls",
+        "tool_calls",
+        "events",
+        "replay_cache",
+        "report",
+        "metrics",
+        "errors",
+    ],
+    "required_tool_fields": [
+        "source",
+        "query",
+        "latency_ms",
+        "result_count",
+        "error",
+        "tool_call_id",
+    ],
+    "required_llm_fields": [
+        "call_id",
+        "model",
+        "latency_ms",
+        "prompt_chars",
+        "response_chars",
+        "prompt_hash",
+        "response_hash",
+        "error",
+    ],
+}
+
+
 HARD_SCENARIOS: List[Scenario] = [
     {
         "id": "agent_reliability_hard",
@@ -28,6 +80,8 @@ HARD_SCENARIOS: List[Scenario] = [
             "trace",
         ],
         "expected_sections": ["执行摘要", "核心发现", "深度分析", "来源概览", "参考资料", "结论"],
+        "thresholds": DEFAULT_THRESHOLDS,
+        "expected_trace": DEFAULT_EXPECTED_TRACE,
         "canned_results": {
             "tavily": [
                 {
@@ -113,6 +167,12 @@ HARD_SCENARIOS: List[Scenario] = [
             "human",
         ],
         "expected_sections": ["执行摘要", "核心发现", "深度分析", "来源概览", "参考资料", "结论"],
+        "thresholds": {
+            **DEFAULT_THRESHOLDS,
+            "tool_success_rate": 0.50,
+            "grounded_key_finding_rate": 0.50,
+        },
+        "expected_trace": DEFAULT_EXPECTED_TRACE,
         "canned_results": {
             "tavily": [
                 {
@@ -176,6 +236,12 @@ HARD_SCENARIOS: List[Scenario] = [
             "acceptance",
         ],
         "expected_sections": ["执行摘要", "核心发现", "深度分析", "来源概览", "参考资料", "结论"],
+        "thresholds": {
+            **DEFAULT_THRESHOLDS,
+            "plan_coverage": 0.65,
+            "citation_id_coverage": 0.60,
+        },
+        "expected_trace": DEFAULT_EXPECTED_TRACE,
         "canned_results": {
             "tavily": [
                 {

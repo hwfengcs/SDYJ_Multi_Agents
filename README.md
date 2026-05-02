@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-SDYJ Multi Agents 是一个基于 LangGraph 的多智能体深度研究系统。它把一次开放式研究任务拆成“意图识别 -> 计划生成 -> 人工审核 -> 多源检索 -> 综合报告”的可追踪工作流，适合展示 AI Agent 工程中的任务规划、工具调用、人机协作、报告合成和多模型适配能力。
+SDYJ Multi Agents 是一个基于 LangGraph 的多智能体研究框架。它把开放式研究任务拆成“意图识别 -> 计划生成 -> 人工审核 -> 多源检索 -> 综合报告”的可控工作流，并重点提供 Trace v2、deterministic replay、证据追踪和可作为 CI gate 的 benchmark。
 
 ## 为什么值得关注
 
@@ -15,10 +15,10 @@ SDYJ Multi Agents 是一个基于 LangGraph 的多智能体深度研究系统。
 - **多模型适配**：支持 DeepSeek、OpenAI、Claude、Gemini，统一 LLM 抽象层。
 - **多源检索**：集成 Tavily、arXiv，并预留 MCP 工具适配接口。
 - **证据驱动报告**：检索结果会规范化为 `E1/E2/...` 证据项，自动去重并保留 URL、domain、query、发布时间和相关性分数。
-- **Agent 可观测性**：每次运行都会生成 JSON trace，记录节点、LLM 调用、工具调用、latency、错误和报告指标。
-- **可复现评测**：内置困难 Agent 场景，支持离线 canned evidence 评测，也支持真实 DeepSeek live 评测。
+- **Trace v2 可观测性**：每次运行都会生成事件时间线，记录节点、LLM 调用、工具调用、routing decision、latency、错误、报告指标和 replay cache。
+- **Deterministic Replay**：可用已记录的 LLM/tool I/O 重放一次历史运行，复现失败路径，不调用真实 API。
+- **实用 Benchmark**：内置困难 Agent 场景，支持阈值 gate、summary compare、trace completeness 和离线确定性检查。
 - **可复现工程**：提供 Python 包配置、CLI 入口、单元测试、CI、示例输出和架构文档。
-- **面向 Agent 岗位的信号**：关注 trace、evaluation、source grounding、tool reliability 等真实工程问题。
 
 ## 架构概览
 
@@ -115,30 +115,45 @@ python main.py research \
 python main.py
 ```
 
-### 4. 查看运行轨迹
+### 4. Trace / Replay
 
-每次研究和评测都会把 trace 写入 `outputs/traces/`：
+每次研究和评测都会写入 run bundle：
+
+```text
+outputs/runs/<run-id>/
+  trace.json
+  events.jsonl
+  state.final.json
+  report.md|html|json
+```
+
+同时保留兼容路径 `outputs/traces/<run-id>.json`。
 
 ```bash
 python main.py inspect-run
-python main.py inspect-run <run-id>
+python main.py inspect-run <run-id> --timeline
+python main.py runs list
+python main.py replay <run-id>
+python main.py diff-runs <run-a> <run-b>
 ```
 
-trace 会展示节点数、LLM 调用数、工具调用数、错误、证据数量、引用覆盖率、重复 URL 比例、工具成功率等指标。
+详见 [docs/trace-replay.md](docs/trace-replay.md)。
 
-### 5. 运行评测
+### 5. Benchmark
 
-离线评测不需要真实 API key，使用固定困难场景和 canned evidence，适合 CI 和回归测试：
+离线 benchmark 不需要真实 API key，使用固定困难场景和 canned evidence，适合 CI 和回归测试：
 
 ```bash
 python main.py list-scenarios
-python main.py eval --max-scenarios 1 --max-iterations 2
+python main.py benchmark run --max-scenarios 1 --max-iterations 2
+python main.py benchmark run --fail-under 0.75
+python main.py benchmark run --determinism-repeats 2
 ```
 
 真实 DeepSeek 评测会调用 `.env` 中的 `DEEPSEEK_API_KEY`，默认仍使用 canned evidence，方便把变量集中在模型推理质量上：
 
 ```bash
-python main.py eval \
+python main.py benchmark run \
   --live \
   --provider deepseek \
   --model deepseek-v4-flash \
@@ -147,6 +162,8 @@ python main.py eval \
 ```
 
 如果需要同时评估真实搜索链路，可以加 `--live-search`。
+
+旧命令 `python main.py eval ...` 仍然可用。详见 [docs/benchmark.md](docs/benchmark.md)。
 
 ## 项目结构
 
@@ -159,8 +176,8 @@ SDYJ_Agents/
   tools/        # Tavily, arXiv, MCP adapters
   workflow/     # LangGraph graph and state
   utils/        # config, logging, evidence, tracing
-  evaluation/   # scenarios, metrics, eval runner
-docs/           # architecture, evaluation, roadmap context
+  evaluation/   # benchmark scenarios, metrics, runner
+docs/           # architecture, trace/replay, benchmark, roadmap
 examples/       # small reproducible examples
 tests/          # unit tests with fake LLM/search
 ```
@@ -169,11 +186,13 @@ tests/          # unit tests with fake LLM/search
 
 - Markdown：适合版本管理、二次编辑、论文/报告草稿。
 - HTML：适合直接分享和演示。
+- JSON：适合下游自动化、回归评测和系统集成。
 
 生成文件默认写入 `outputs/`，该目录已被 git 忽略：
 
-- `outputs/research_report_*.md|html`：研究报告。
-- `outputs/traces/*.json`：可观测运行轨迹。
+- `outputs/research_report_*.md|html|json`：研究报告。
+- `outputs/runs/<run-id>/`：Trace v2 run bundle。
+- `outputs/traces/*.json`：兼容旧路径的运行轨迹。
 - `outputs/eval_reports/`：评测报告和汇总。
 
 仓库展示样例见 [examples/sample_report.md](examples/sample_report.md)、[examples/sample_trace.json](examples/sample_trace.json) 和 [examples/eval_summary.json](examples/eval_summary.json)。
@@ -189,23 +208,16 @@ ruff check SDYJ_Agents tests
 
 ## Roadmap
 
-短期目标：
+v0.5 已完成：
 
-- 增强 report evidence schema，让每个结论绑定来源、query 和置信度。✅
-- 增加 trace/token/latency 指标，便于评测 Agent 运行质量。✅
-- 补充端到端 demo 和 benchmark case。✅
-- 完善 MCP adapter，使外部工具接入更标准。
+- Trace v2 事件流和 run bundle。✅
+- Deterministic replay。✅
+- Benchmark gate、阈值、summary compare 和 trace completeness。✅
+- JSON 输出格式。✅
+
+下一步重点是 partial replay、外部 benchmark suite、工具注册机制、OpenTelemetry export 和 Web UI。
 
 完整路线图见 [ROADMAP.md](ROADMAP.md)。
-
-## 适合展示的能力
-
-这个项目可以作为 AI Agent 算法工程师实习申请材料，重点讲：
-
-- 如何用 LangGraph 设计可控的 Agent 状态机。
-- 如何在人机协作中降低错误计划的执行成本。
-- 如何把搜索结果组织为可追踪 evidence，再交给报告生成器。
-- 如何用 mock、单元测试和 CI 让 LLM 项目具备工程可信度。
 
 ## 贡献
 

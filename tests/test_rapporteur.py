@@ -1,4 +1,5 @@
 from SDYJ_Agents.agents.rapporteur import Rapporteur
+import json
 
 
 class FakeLLM:
@@ -42,3 +43,25 @@ def test_citations_are_deduplicated_by_url():
 
     assert citations.count("https://example.com") == 2
     assert "2." not in citations
+
+
+def test_json_report_is_machine_readable():
+    rapporteur = Rapporteur(FakeLLM())
+    report = rapporteur._generate_json_report(
+        query="agent ops",
+        plan={"research_goal": "agent ops"},
+        summary="summary",
+        organized_info={"themes": [{"name": "Reliability", "key_points": ["Trace every claim"]}]},
+        results=[
+            {
+                "source": "tavily",
+                "query": "agent ops",
+                "results": [{"title": "Trace", "url": "https://example.com/t", "snippet": "trace"}],
+            }
+        ],
+    )
+
+    payload = json.loads(report)
+    assert payload["query"] == "agent ops"
+    assert payload["sources"][0]["evidence_id"] == "E1"
+    assert payload["references"][0]["citation"] == "[E1]"

@@ -1,7 +1,8 @@
 # Roadmap
 
-This roadmap turns SDYJ Multi Agents from an MVP into a stronger open-source
-portfolio project for AI agent engineering roles.
+This roadmap turns SDYJ Multi Agents into a practical multi-agent research
+framework with observability, replay, evidence grounding, and regression
+benchmarks.
 
 ## v0.1 - Engineering Baseline
 
@@ -32,9 +33,22 @@ portfolio project for AI agent engineering roles.
 - [x] Add report quality checks for coverage, citation density, source deduplication, and tool reliability.
 - [x] Publish benchmark results in `docs/evaluation.md`.
 
-## v0.5 - Extensibility
+## v0.5 - Trace, Replay, and Benchmark Gates
+
+- [x] Add Trace v2 event timeline while preserving legacy trace fields.
+- [x] Store run bundles under `outputs/runs/<run-id>/`.
+- [x] Add deterministic replay from recorded LLM/tool I/O.
+- [x] Add `diff-runs` and `runs list` CLI utilities.
+- [x] Add benchmark thresholds, `--fail-under`, summary comparison, and determinism checks.
+- [x] Add trace completeness as a benchmark metric.
+- [x] Add JSON report output for downstream automation.
+
+## v0.6 - Extensibility and Runtime Reliability
 
 - [ ] Make the MCP adapter closer to the official MCP tool model.
 - [ ] Add plugin-style registration for retrieval tools.
 - [ ] Add provider capability metadata such as context window and structured output support.
-- [ ] Add JSON output for downstream automation.
+- [ ] Add retry/timeout policy objects for each retrieval source.
+- [ ] Add partial replay from a selected workflow node.
+- [ ] Add external benchmark suite loading from JSON/YAML files.
+- [ ] Add OpenTelemetry export for trace events.

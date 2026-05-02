@@ -2,7 +2,9 @@
 
 Deep research agents need evaluation beyond final-answer checks. SDYJ evaluates
 planning quality, retrieval/tool reliability, evidence grounding, synthesis
-quality, efficiency, and human-control behavior.
+quality, efficiency, trace completeness, replayability, and human-control
+behavior. The operational benchmark guide is now maintained in
+[benchmark.md](benchmark.md).
 
 ## Evaluation Dimensions
 
@@ -14,6 +16,7 @@ quality, efficiency, and human-control behavior.
 | Synthesis quality | Whether the report is coherent and complete | Section completeness, grounded key findings |
 | Efficiency | Runtime budget and cost behavior | Iterations, latency, token usage when exposed |
 | Human control | Whether approval gates reduce risk | Plan approval before expensive retrieval |
+| Trace/replay | Whether failures can be diagnosed and replayed | Trace completeness, replay cache, event timeline |
 
 ## Implemented Test Layers
 
@@ -44,9 +47,11 @@ List scenarios:
 
 ```bash
 python main.py list-scenarios
+python main.py benchmark run --max-scenarios 1 --max-iterations 2
+python main.py benchmark run --fail-under 0.75
 ```
 
-Run deterministic offline eval:
+The legacy command remains supported:
 
 ```bash
 python main.py eval --max-scenarios 1 --max-iterations 2

@@ -5,6 +5,7 @@ This module implements the Rapporteur agent, which is responsible for
 generating the final research report.
 """
 
+import json
 from typing import Dict, List
 from datetime import datetime
 from ..workflow.state import ResearchState
@@ -73,6 +74,15 @@ class Rapporteur:
                 organized_info=organized_info,
                 results=results,
                 evidence_items=evidence_items
+            )
+        elif output_format == 'json':
+            report = self._generate_json_report(
+                query=query,
+                plan=plan,
+                summary=summary,
+                organized_info=organized_info,
+                results=results,
+                evidence_items=evidence_items,
             )
         else:
             # Default to markdown
@@ -152,7 +162,6 @@ class Rapporteur:
         response = self.llm.generate(prompt, temperature=0.5)
 
         # Try to parse JSON
-        import json
         try:
             start = response.find('{')
             end = response.rfind('}') + 1
@@ -242,6 +251,60 @@ class Rapporteur:
         sections.append(self._generate_conclusion(query, summary))
 
         return '\n'.join(sections)
+
+    def _generate_json_report(
+        self,
+        query: str,
+        plan: Dict,
+        summary: str,
+        organized_info: Dict,
+        results: List[Dict],
+        evidence_items: List[Dict] | None = None,
+    ) -> str:
+        """Generate a machine-readable research report."""
+        evidence_items = evidence_items or build_evidence_from_results(results)
+        key_findings = []
+        for theme in organized_info.get("themes", []):
+            for point in theme.get("key_points", []):
+                key_findings.append(
+                    {
+                        "theme": theme.get("name"),
+                        "claim": append_citations(point, evidence_items),
+                    }
+                )
+
+        payload = {
+            "query": query,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "research_goal": plan.get("research_goal", query),
+            "sections": ["执行摘要", "核心发现", "深度分析", "来源概览", "参考资料", "结论"],
+            "summary": summary,
+            "key_findings": key_findings,
+            "sources": [
+                {
+                    "evidence_id": item.get("evidence_id"),
+                    "source": item.get("source"),
+                    "title": item.get("title"),
+                    "url": item.get("url"),
+                    "domain": item.get("domain"),
+                    "query": item.get("query"),
+                    "published_date": item.get("published_date"),
+                    "relevance_score": item.get("relevance_score"),
+                }
+                for item in evidence_items
+            ],
+            "references": [
+                {
+                    "citation": f"[{item.get('evidence_id')}]",
+                    "title": item.get("title"),
+                    "url": item.get("url"),
+                    "source": item.get("source"),
+                }
+                for item in evidence_items
+            ],
+            "raw_batch_count": len(results),
+        }
+        return json.dumps(payload, indent=2, ensure_ascii=False)
 
     def _format_detailed_results(self, results: List[Dict]) -> str:
         """

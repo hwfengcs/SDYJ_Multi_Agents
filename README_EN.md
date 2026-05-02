@@ -6,9 +6,9 @@ English | [中文](README.md)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-SDYJ Multi Agents is a LangGraph-based deep research assistant. It turns an open-ended research request into a traceable workflow: intent classification, research planning, human review, multi-source retrieval, and synthesized Markdown or HTML reports.
+SDYJ Multi Agents is a LangGraph-based multi-agent research framework. It turns an open-ended request into a controllable workflow: intent classification, planning, human review, multi-source retrieval, and synthesized Markdown, HTML, or JSON reports.
 
-The project is designed to demonstrate practical AI agent engineering: workflow control, tool use, human-in-the-loop approval, provider-agnostic LLM integration, source-grounded reporting, tests, and CI.
+The project focuses on practical agent operations: Trace v2 observability, deterministic replay, evidence-grounded reporting, benchmark gates, provider-agnostic LLM integration, tests, and CI.
 
 ## Highlights
 
@@ -17,10 +17,10 @@ The project is designed to demonstrate practical AI agent engineering: workflow 
 - **Provider-agnostic LLM layer**: DeepSeek, OpenAI, Claude, and Gemini share one interface.
 - **Multi-source retrieval**: Tavily, arXiv, and an MCP adapter for external tools.
 - **Evidence-grounded reports**: retrieved results are normalized into `E1/E2/...` evidence items with URL deduplication, domain, query, date, and score metadata.
-- **Agent observability**: every run can persist a JSON trace with nodes, LLM calls, tool calls, latency, errors, and report metrics.
-- **Reproducible evaluation**: hard built-in agent scenarios support offline canned-evidence evaluation and real DeepSeek live evaluation.
+- **Trace v2 observability**: every run records an event timeline with nodes, LLM calls, tool calls, routing decisions, latency, errors, report metrics, and replay cache.
+- **Deterministic replay**: replay a historical run from recorded LLM/tool I/O without calling real APIs.
+- **Practical benchmarks**: hard built-in agent scenarios support thresholds, `--fail-under`, summary comparison, trace completeness, and offline determinism checks.
 - **Engineering-first repo**: Python packaging, CLI entry point, tests, CI, docs, and examples.
-- **Internship-ready story**: emphasizes traceability, evaluation, tool reliability, and source grounding.
 
 ## Architecture
 
@@ -117,28 +117,35 @@ Run without a query to open the interactive menu:
 python main.py
 ```
 
-### 4. Inspect Traces
+### 4. Trace / Replay
 
-Runs write JSON traces to `outputs/traces/`:
+Runs write a bundle under `outputs/runs/<run-id>/` and keep a backward-compatible copy under `outputs/traces/<run-id>.json`:
 
 ```bash
 python main.py inspect-run
-python main.py inspect-run <run-id>
+python main.py inspect-run <run-id> --timeline
+python main.py runs list
+python main.py replay <run-id>
+python main.py diff-runs <run-a> <run-b>
 ```
 
-### 5. Evaluate
+See [docs/trace-replay.md](docs/trace-replay.md).
 
-Offline evaluation uses deterministic hard scenarios and canned evidence, so no real API key is required:
+### 5. Benchmark
+
+Offline benchmarks use deterministic hard scenarios and canned evidence, so no real API key is required:
 
 ```bash
 python main.py list-scenarios
-python main.py eval --max-scenarios 1 --max-iterations 2
+python main.py benchmark run --max-scenarios 1 --max-iterations 2
+python main.py benchmark run --fail-under 0.75
+python main.py benchmark run --determinism-repeats 2
 ```
 
 Live DeepSeek evaluation uses `DEEPSEEK_API_KEY` from `.env` while still defaulting to canned evidence for reproducibility:
 
 ```bash
-python main.py eval \
+python main.py benchmark run \
   --live \
   --provider deepseek \
   --model deepseek-v4-flash \
@@ -147,6 +154,8 @@ python main.py eval \
 ```
 
 Add `--live-search` if you also want to evaluate real retrieval.
+
+The older `python main.py eval ...` command remains supported. See [docs/benchmark.md](docs/benchmark.md).
 
 ## Project Layout
 
@@ -159,8 +168,8 @@ SDYJ_Agents/
   tools/        # Tavily, arXiv, MCP adapters
   workflow/     # LangGraph graph and state
   utils/        # config, logging, evidence, tracing
-  evaluation/   # scenarios, metrics, eval runner
-docs/           # architecture, evaluation, roadmap context
+  evaluation/   # benchmark scenarios, metrics, runner
+docs/           # architecture, trace/replay, benchmark, roadmap
 examples/       # small reproducible examples
 tests/          # unit tests with fake LLM/search
 ```
@@ -169,11 +178,13 @@ tests/          # unit tests with fake LLM/search
 
 - Markdown: best for version control, editing, and report drafts.
 - HTML: best for browser-based sharing and demos.
+- JSON: best for downstream automation, regression checks, and integration.
 
 Generated artifacts are written to `outputs/`, which is ignored by git:
 
-- `outputs/research_report_*.md|html`: research reports.
-- `outputs/traces/*.json`: run traces.
+- `outputs/research_report_*.md|html|json`: research reports.
+- `outputs/runs/<run-id>/`: Trace v2 run bundles.
+- `outputs/traces/*.json`: backward-compatible run traces.
 - `outputs/eval_reports/`: evaluation reports and summaries.
 
 Repository examples are available in [examples/sample_report.md](examples/sample_report.md), [examples/sample_trace.json](examples/sample_trace.json), and [examples/eval_summary.json](examples/eval_summary.json).
@@ -189,23 +200,16 @@ Unit tests use fake LLM and fake search implementations, so real API keys are no
 
 ## Roadmap
 
-Near-term work:
+v0.5 includes:
 
-- Add an evidence schema so claims can point to source URL, query, and confidence. Done.
-- Track trace, token, and latency metrics for agent evaluation. Done.
-- Add end-to-end demos and benchmark scenarios. Done.
-- Make the MCP adapter more standards-aligned and easier to extend.
+- Trace v2 event timeline and run bundles. Done.
+- Deterministic replay. Done.
+- Benchmark gates, thresholds, summary comparison, and trace completeness. Done.
+- JSON output. Done.
+
+Next work: partial replay, external benchmark suites, a stronger tool registry, OpenTelemetry export, and a run-inspection web UI.
 
 See [ROADMAP.md](ROADMAP.md).
-
-## Why This Matters
-
-This project is suitable as an AI agent engineering portfolio piece. It gives you concrete topics to discuss in interviews:
-
-- designing controllable agent workflows with LangGraph;
-- reducing execution risk through human-in-the-loop planning;
-- grounding generated reports in retrieved sources;
-- testing and maintaining LLM applications with mocks and CI.
 
 ## Contributing
 

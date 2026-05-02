@@ -10,7 +10,7 @@ from ..agents.coordinator import Coordinator
 from ..agents.planner import Planner
 from ..agents.researcher import Researcher
 from ..agents.rapporteur import Rapporteur
-from ..utils.tracing import record_node_event
+from ..utils.tracing import record_decision, record_node_event, record_trace_event
 
 
 class WorkflowNodes:
@@ -50,6 +50,13 @@ class WorkflowNodes:
             Updated state
         """
         started = time.perf_counter()
+        record_trace_event(
+            state.get('trace'),
+            "node_start",
+            "coordinator",
+            node="coordinator",
+            input_snapshot={"query": state.get("query"), "query_type": state.get("query_type")},
+        )
         try:
             # Check if this is a simple query that was already handled
             if state.get('query_type') in ['GREETING', 'INAPPROPRIATE']:
@@ -80,6 +87,17 @@ class WorkflowNodes:
             Updated state with research plan
         """
         started = time.perf_counter()
+        record_trace_event(
+            state.get('trace'),
+            "node_start",
+            "planner",
+            node="planner",
+            input_snapshot={
+                "query": state.get("query"),
+                "has_plan": bool(state.get("research_plan")),
+                "has_feedback": bool(state.get("user_feedback")),
+            },
+        )
         try:
             state['current_step'] = 'planning'
 
@@ -112,12 +130,28 @@ class WorkflowNodes:
             Updated state
         """
         started = time.perf_counter()
+        record_trace_event(
+            state.get('trace'),
+            "node_start",
+            "human_review",
+            node="human_review",
+            input_snapshot={
+                "auto_approve": state.get("auto_approve_plan", False),
+                "plan_approved": state.get("plan_approved", False),
+            },
+        )
         try:
             state['current_step'] = 'awaiting_approval'
 
             # Check if auto-approve is enabled
             if state.get('auto_approve_plan', False):
                 state['plan_approved'] = True
+                record_decision(
+                    state.get('trace'),
+                    node="human_review",
+                    decision="plan_auto_approved",
+                    reason="auto_approve_plan is enabled",
+                )
 
             # In actual implementation, this will pause and wait for user input
             # For now, we just mark the state
@@ -141,6 +175,17 @@ class WorkflowNodes:
             Updated state with research results
         """
         started = time.perf_counter()
+        record_trace_event(
+            state.get('trace'),
+            "node_start",
+            "researcher",
+            node="researcher",
+            input_snapshot={
+                "iteration_count": state.get("iteration_count", 0),
+                "max_iterations": state.get("max_iterations"),
+                "evidence_count": len(state.get("evidence_items") or []),
+            },
+        )
         try:
             state['current_step'] = 'researching'
 
@@ -179,6 +224,17 @@ class WorkflowNodes:
             Updated state with final report
         """
         started = time.perf_counter()
+        record_trace_event(
+            state.get('trace'),
+            "node_start",
+            "rapporteur",
+            node="rapporteur",
+            input_snapshot={
+                "research_batches": len(state.get("research_results") or []),
+                "evidence_count": len(state.get("evidence_items") or []),
+                "output_format": state.get("output_format"),
+            },
+        )
         try:
             state['current_step'] = 'generating_report'
             state = self.rapporteur.generate_report(state)
@@ -203,9 +259,21 @@ class WorkflowNodes:
         """
         # If this is a simple query (greeting or inappropriate), end workflow
         if state.get('query_type') in ['GREETING', 'INAPPROPRIATE']:
+            record_decision(
+                state.get('trace'),
+                node="coordinator",
+                decision="route_end",
+                reason=f"query_type={state.get('query_type')}",
+            )
             return "end"
 
         # Otherwise, continue to planner for research
+        record_decision(
+            state.get('trace'),
+            node="coordinator",
+            decision="route_planner",
+            reason="research query",
+        )
         return "planner"
 
     def should_continue_research(self, state: Dict[str, Any]) -> str:
@@ -220,9 +288,22 @@ class WorkflowNodes:
         """
         # If plan not approved, go back to planner
         if not state.get('plan_approved'):
+            record_decision(
+                state.get('trace'),
+                node="human_review",
+                decision="route_planner",
+                reason="plan not approved",
+                metadata={"feedback": state.get("user_feedback")},
+            )
             return "planner"
 
         # If plan approved, start research
+        record_decision(
+            state.get('trace'),
+            node="human_review",
+            decision="route_researcher",
+            reason="plan approved",
+        )
         return "researcher"
 
     def should_generate_report(self, state: Dict[str, Any]) -> str:
@@ -237,17 +318,50 @@ class WorkflowNodes:
         """
         # Check if max iterations reached
         if state['iteration_count'] >= state['max_iterations']:
+            record_decision(
+                state.get('trace'),
+                node="researcher",
+                decision="route_rapporteur",
+                reason="max iterations reached",
+                metadata={
+                    "iteration_count": state.get("iteration_count"),
+                    "max_iterations": state.get("max_iterations"),
+                },
+            )
             return "rapporteur"
 
         # Check if context is sufficient
         if self.planner.evaluate_context_sufficiency(state):
+            record_decision(
+                state.get('trace'),
+                node="researcher",
+                decision="route_rapporteur",
+                reason="planner judged context sufficient",
+                metadata={
+                    "iteration_count": state.get("iteration_count"),
+                    "evidence_count": len(state.get("evidence_items") or []),
+                },
+            )
             return "rapporteur"
 
         # Check if there are more tasks
         next_task = self.planner.get_next_task(state)
         if next_task:
+            record_decision(
+                state.get('trace'),
+                node="researcher",
+                decision="route_researcher",
+                reason="pending task available",
+                metadata={"task_id": next_task.get("task_id")},
+            )
             return "researcher"
         else:
+            record_decision(
+                state.get('trace'),
+                node="researcher",
+                decision="route_rapporteur",
+                reason="no pending tasks",
+            )
             return "rapporteur"
 
 

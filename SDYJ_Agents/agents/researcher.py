@@ -82,6 +82,7 @@ class Researcher:
                         latency_ms=latency_ms,
                         result_count=len(result.get('results', [])),
                         error=result.get('error'),
+                        result=result,
                     )
                 else:
                     record_tool_call(
@@ -135,7 +136,10 @@ class Researcher:
                 return self.arxiv.search(query)
             elif source == 'mcp' and self.mcp:
                 import asyncio
-                return asyncio.run(self.mcp.search(query))
+                result = self.mcp.search(query)
+                if asyncio.iscoroutine(result):
+                    return asyncio.run(result)
+                return result
             else:
                 return None
         except Exception as e:

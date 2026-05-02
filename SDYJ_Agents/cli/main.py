@@ -29,11 +29,14 @@ from ..utils.logger import setup_logger
 from ..utils.tracing import (
     InstrumentedLLM,
     create_run_trace,
+    diff_traces,
+    iter_timeline_events,
     latest_trace_path,
     load_trace,
     merge_trace_state,
     save_trace,
 )
+from ..replay import can_deterministically_replay, run_deterministic_replay
 from ..llm.factory import LLMFactory
 from ..agents.coordinator import Coordinator
 from ..agents.planner import Planner
@@ -54,7 +57,7 @@ class CLIConfig:
     auto_approve: bool = False
     output_dir: str = "./outputs"
     show_steps: bool = False
-    output_format: str = "markdown"  # "markdown" or "html"
+    output_format: str = "markdown"  # "markdown", "html", or "json"
 
 
 # 配置文件路径
@@ -266,16 +269,16 @@ def configure_settings(config: CLIConfig) -> None:
         console.print(f"[green][OK] 已更新输出目录为 {output_dir_input}[/green]")
 
     # 修改输出格式
-    output_format_input = input(f"输出格式 (markdown/html) [{config.output_format}]: ").strip().lower()
-    if output_format_input in ['markdown', 'md', 'html']:
+    output_format_input = input(f"输出格式 (markdown/html/json) [{config.output_format}]: ").strip().lower()
+    if output_format_input in ['markdown', 'md', 'html', 'json']:
         # 规范化格式名称
-        normalized_format = 'markdown' if output_format_input in ['markdown', 'md'] else 'html'
+        normalized_format = 'markdown' if output_format_input in ['markdown', 'md'] else output_format_input
         if normalized_format != config.output_format:
             config.output_format = normalized_format
             config_changed = True
             console.print(f"[green][OK] 已更新输出格式为 {normalized_format.upper()}[/green]")
     elif output_format_input:
-        console.print("[red][ERR] 无效的输出格式，请选择 markdown 或 html[/red]")
+        console.print("[red][ERR] 无效的输出格式，请选择 markdown、html 或 json[/red]")
 
     # 修改显示步骤
     show_steps_input = input(f"显示步骤 (y/n) [{'y' if config.show_steps else 'n'}]: ").strip().lower()
@@ -505,27 +508,38 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
             output_dir.mkdir(parents=True, exist_ok=True)
 
             # Determine file extension based on output format
-            file_extension = 'html' if current_state.get('output_format') == 'html' else 'md'
+            if current_state.get('output_format') == 'html':
+                file_extension = 'html'
+            elif current_state.get('output_format') == 'json':
+                file_extension = 'json'
+            else:
+                file_extension = 'md'
             output_path = output_dir / f"research_report_{timestamp}.{file_extension}"
 
             rapporteur.save_report(report, str(output_path))
             console.print(f"\n[green][OK] 报告已保存至：{output_path}[/green]")
             trace = merge_trace_state(trace, current_state.get("trace"))
-            trace_path = save_trace(trace, config.output_dir)
+            trace_path = save_trace(
+                trace,
+                config.output_dir,
+                final_state=current_state,
+                report=report,
+                report_extension=file_extension,
+            )
             if trace_path:
                 console.print(f"[green][OK] 运行轨迹已保存至：{trace_path}[/green]")
 
         elif current_state and current_state.get('simple_response'):
             # Simple query was handled, no need to show error
             trace = merge_trace_state(trace, current_state.get("trace"))
-            trace_path = save_trace(trace, config.output_dir)
+            trace_path = save_trace(trace, config.output_dir, final_state=current_state)
             if trace_path:
                 console.print(f"[green][OK] 运行轨迹已保存至：{trace_path}[/green]")
         else:
             console.print("[red][ERR] 研究未成功完成[/red]")
             if current_state and isinstance(current_state, dict):
                 trace = merge_trace_state(trace, current_state.get("trace"))
-            trace_path = save_trace(trace, config.output_dir)
+            trace_path = save_trace(trace, config.output_dir, final_state=current_state)
             if trace_path:
                 console.print(f"[yellow][TRACE] 失败轨迹已保存至：{trace_path}[/yellow]")
 
@@ -618,7 +632,12 @@ def run_single_task(config: CLIConfig, query: str) -> int:
         return 1
 
 
-def inspect_run(run_id: str | None = None, output_dir: str = "./outputs") -> int:
+def inspect_run(
+    run_id: str | None = None,
+    output_dir: str = "./outputs",
+    timeline: bool = False,
+    event_id: str | None = None,
+) -> int:
     """Inspect a persisted run trace."""
     try:
         if not run_id:
@@ -667,6 +686,33 @@ def inspect_run(run_id: str | None = None, output_dir: str = "./outputs") -> int
         if trace.get("tool_calls"):
             console.print(tools)
 
+        if timeline:
+            events = iter_timeline_events(trace)
+            if event_id:
+                events = [event for event in events if event.get("event_id") == event_id]
+            timeline_table = Table(title="Timeline")
+            timeline_table.add_column("Seq", justify="right")
+            timeline_table.add_column("Event")
+            timeline_table.add_column("Name")
+            timeline_table.add_column("Node")
+            timeline_table.add_column("Status")
+            timeline_table.add_column("Latency", justify="right")
+            timeline_table.add_column("Details")
+            for event in events:
+                details = event.get("metadata") or {}
+                if event.get("error"):
+                    details = {**details, "error": event.get("error")}
+                timeline_table.add_row(
+                    str(event.get("seq") or ""),
+                    str(event.get("event_type") or ""),
+                    str(event.get("name") or ""),
+                    str(event.get("node") or ""),
+                    str(event.get("status") or ""),
+                    "" if event.get("latency_ms") is None else str(event.get("latency_ms")),
+                    json.dumps(details, ensure_ascii=False)[:120],
+                )
+            console.print(timeline_table)
+
         if trace.get("errors"):
             console.print("[bold red]Errors[/bold red]")
             for error in trace["errors"]:
@@ -675,6 +721,172 @@ def inspect_run(run_id: str | None = None, output_dir: str = "./outputs") -> int
     except Exception as e:
         error_console.print(f"[red][ERR] Trace 读取失败：{e}[/red]")
         return 1
+
+
+def replay_run(run_id: str, output_dir: str = "./outputs") -> int:
+    """Replay a persisted run with recorded I/O."""
+    try:
+        trace = load_trace(run_id, output_dir)
+        ok, reason = can_deterministically_replay(trace)
+        if not ok:
+            error_console.print(f"[red][ERR] 无法 deterministic replay：{reason}[/red]")
+            return 2
+        result = run_deterministic_replay(trace, output_dir=output_dir)
+        console.print(Panel.fit(
+            f"[bold cyan]Replay completed[/bold cyan]\n"
+            f"source={result['source_run_id']}\n"
+            f"replay={result['replay_run_id']}",
+            title="SDYJ Replay",
+            border_style="cyan",
+        ))
+        console.print(f"[green][OK] replay trace: {result['trace_path']}[/green]")
+        return 0
+    except Exception as e:
+        error_console.print(f"[red][ERR] Replay 失败：{e}[/red]")
+        return 1
+
+
+def diff_runs(left: str, right: str, output_dir: str = "./outputs", as_json: bool = False) -> int:
+    """Compare two persisted traces."""
+    try:
+        left_trace = load_trace(left, output_dir)
+        right_trace = load_trace(right, output_dir)
+        diff = diff_traces(left_trace, right_trace)
+        if as_json:
+            console.print(json.dumps(diff, indent=2, ensure_ascii=False))
+            return 0
+
+        table = Table(title=f"Trace Diff: {diff['left_run_id']} -> {diff['right_run_id']}")
+        table.add_column("Metric")
+        table.add_column("Left")
+        table.add_column("Right")
+        table.add_column("Delta")
+        for row in diff["rows"]:
+            if not row["changed"] and row["metric"] not in {"run_id"}:
+                continue
+            table.add_row(
+                row["metric"],
+                str(row["left"]),
+                str(row["right"]),
+                str(row["delta"]),
+            )
+        console.print(table)
+        return 0
+    except Exception as e:
+        error_console.print(f"[red][ERR] Diff 失败：{e}[/red]")
+        return 1
+
+
+def compare_benchmark_summaries(
+    baseline_path: str,
+    candidate_path: str,
+    as_json: bool = False,
+) -> int:
+    """Compare two benchmark summary JSON files."""
+    try:
+        with open(baseline_path, "r", encoding="utf-8") as f:
+            baseline = json.load(f)
+        with open(candidate_path, "r", encoding="utf-8") as f:
+            candidate = json.load(f)
+
+        baseline_by_id = {item["scenario_id"]: item for item in baseline.get("results", [])}
+        rows = []
+        for item in candidate.get("results", []):
+            scenario_id = item["scenario_id"]
+            old = baseline_by_id.get(scenario_id, {})
+            old_score = old.get("metrics", {}).get("overall_score")
+            new_score = item.get("metrics", {}).get("overall_score")
+            delta = (
+                round(new_score - old_score, 4)
+                if isinstance(old_score, (int, float)) and isinstance(new_score, (int, float))
+                else None
+            )
+            rows.append(
+                {
+                    "scenario_id": scenario_id,
+                    "baseline_score": old_score,
+                    "candidate_score": new_score,
+                    "delta": delta,
+                    "regressed": isinstance(delta, (int, float)) and delta < -0.02,
+                }
+            )
+        payload = {
+            "baseline": baseline_path,
+            "candidate": candidate_path,
+            "baseline_average": baseline.get("average_score"),
+            "candidate_average": candidate.get("average_score"),
+            "rows": rows,
+            "passed": not any(row["regressed"] for row in rows),
+        }
+        if as_json:
+            console.print(json.dumps(payload, indent=2, ensure_ascii=False))
+            return 0 if payload["passed"] else 3
+
+        table = Table(title="Benchmark Summary Diff")
+        table.add_column("Scenario")
+        table.add_column("Baseline", justify="right")
+        table.add_column("Candidate", justify="right")
+        table.add_column("Delta", justify="right")
+        table.add_column("Status")
+        for row in rows:
+            table.add_row(
+                row["scenario_id"],
+                str(row["baseline_score"]),
+                str(row["candidate_score"]),
+                str(row["delta"]),
+                "REGRESSION" if row["regressed"] else "ok",
+            )
+        console.print(table)
+        return 0 if payload["passed"] else 3
+    except Exception as e:
+        error_console.print(f"[red][ERR] Benchmark compare 失败：{e}[/red]")
+        return 1
+
+
+def list_runs(output_dir: str = "./outputs", limit: int = 20) -> int:
+    """List recent run bundles."""
+    try:
+        runs_dir = Path(output_dir) / "runs"
+        if not runs_dir.exists():
+            error_console.print("[red][ERR] 未找到 runs 目录[/red]")
+            return 1
+        traces = sorted(
+            runs_dir.glob("*/trace.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )[:limit]
+        table = Table(title="Recent Runs")
+        table.add_column("Run ID")
+        table.add_column("Mode")
+        table.add_column("Provider")
+        table.add_column("Model")
+        table.add_column("Errors", justify="right")
+        table.add_column("Created")
+        for path in traces:
+            trace = load_trace(str(path), output_dir)
+            table.add_row(
+                str(trace.get("run_id")),
+                str(trace.get("mode")),
+                str(trace.get("provider")),
+                str(trace.get("model")),
+                str(len(trace.get("errors", []))),
+                str(trace.get("created_at")),
+            )
+        console.print(table)
+        return 0
+    except Exception as e:
+        error_console.print(f"[red][ERR] Runs 读取失败：{e}[/red]")
+        return 1
+
+
+def _parse_threshold_overrides(values: list[str] | None) -> Dict[str, float]:
+    overrides: Dict[str, float] = {}
+    for value in values or []:
+        if "=" not in value:
+            raise ValueError(f"threshold 必须使用 metric=value 格式：{value}")
+        metric, raw_threshold = value.split("=", 1)
+        overrides[metric.strip()] = float(raw_threshold)
+    return overrides
 
 
 def execute_evaluation(args: argparse.Namespace) -> int:
@@ -690,6 +902,10 @@ def execute_evaluation(args: argparse.Namespace) -> int:
             max_iterations=args.max_iterations,
             output_format=args.output_format,
             output_dir=args.output_dir,
+            fail_under=args.fail_under,
+            threshold_overrides=_parse_threshold_overrides(args.threshold),
+            compare_summary_path=args.compare_summary,
+            determinism_repeats=args.determinism_repeats,
         )
 
         table = Table(title="SDYJ Evaluation")
@@ -716,6 +932,11 @@ def execute_evaluation(args: argparse.Namespace) -> int:
                 console.print(f"[dim]report: {item['report_path']}[/dim]")
             if item.get("trace_path"):
                 console.print(f"[dim]trace: {item['trace_path']}[/dim]")
+        if not summary.get("passed", True):
+            console.print("[red][FAIL] Benchmark gate 未通过[/red]")
+            for failed in summary.get("failed_scenarios", []):
+                console.print(f"[red]- {failed['scenario_id']}: {failed['failed_thresholds']}[/red]")
+            return 3
         return 0
     except Exception as e:
         error_console.print(f"[red][ERR] 评测失败：{e}[/red]")
@@ -755,7 +976,7 @@ def _add_runtime_options(parser: argparse.ArgumentParser, saved_config: Dict[str
     parser.add_argument(
         "--output-format",
         default=saved_config.get("output_format", "markdown"),
-        choices=["markdown", "html"],
+        choices=["markdown", "html", "json"],
         help="报告输出格式（默认：markdown）"
     )
     parser.add_argument(
@@ -803,7 +1024,7 @@ def parse_args(argv: Any) -> argparse.Namespace:
     root_parser.add_argument(
         "--version",
         action="version",
-        version="SDYJ Deep Research System 0.4.0"
+        version="SDYJ Deep Research System 0.5.0"
     )
 
     if argv and argv[0] in {"-h", "--help", "--version"}:
@@ -836,11 +1057,78 @@ def parse_args(argv: Any) -> argparse.Namespace:
             default=saved_config.get("output_dir", "./outputs"),
             help="输出目录（默认：./outputs）",
         )
+        parser.add_argument(
+            "--timeline",
+            action="store_true",
+            help="显示 Trace v2 事件时间线",
+        )
+        parser.add_argument(
+            "--event",
+            dest="event_id",
+            help="只显示指定 event_id 的时间线事件",
+        )
         args = parser.parse_args(argv[1:])
         args.command = "inspect-run"
         return args
 
-    if argv and argv[0] == "eval":
+    if argv and argv[0] == "replay":
+        parser = argparse.ArgumentParser(description="使用 trace 中记录的 I/O deterministic replay 一次运行")
+        parser.add_argument("run_id", help="run_id 或 trace JSON 路径")
+        parser.add_argument(
+            "--output-dir",
+            default=saved_config.get("output_dir", "./outputs"),
+            help="输出目录（默认：./outputs）",
+        )
+        args = parser.parse_args(argv[1:])
+        args.command = "replay"
+        return args
+
+    if argv and argv[0] == "diff-runs":
+        parser = argparse.ArgumentParser(description="比较两次 run trace")
+        parser.add_argument("left", help="基准 run_id 或 trace JSON 路径")
+        parser.add_argument("right", help="候选 run_id 或 trace JSON 路径")
+        parser.add_argument(
+            "--output-dir",
+            default=saved_config.get("output_dir", "./outputs"),
+            help="输出目录（默认：./outputs）",
+        )
+        parser.add_argument(
+            "--json",
+            action="store_true",
+            help="输出 JSON diff",
+        )
+        args = parser.parse_args(argv[1:])
+        args.command = "diff-runs"
+        return args
+
+    if argv and argv[0] == "runs":
+        parser = argparse.ArgumentParser(description="管理已保存的 run bundle")
+        subparsers = parser.add_subparsers(dest="runs_command")
+        list_parser = subparsers.add_parser("list", help="列出最近 run")
+        list_parser.add_argument(
+            "--output-dir",
+            default=saved_config.get("output_dir", "./outputs"),
+            help="输出目录（默认：./outputs）",
+        )
+        list_parser.add_argument("--limit", type=int, default=20, help="最多显示多少条")
+        args = parser.parse_args(argv[1:])
+        args.command = "runs"
+        args.runs_command = args.runs_command or "list"
+        return args
+
+    if argv and argv[0] == "benchmark" and len(argv) > 1 and argv[1] == "compare":
+        parser = argparse.ArgumentParser(description="比较两个 benchmark summary JSON")
+        parser.add_argument("baseline", help="基准 eval_summary JSON")
+        parser.add_argument("candidate", help="候选 eval_summary JSON")
+        parser.add_argument("--json", action="store_true", help="输出 JSON diff")
+        args = parser.parse_args(argv[2:])
+        args.command = "benchmark-compare"
+        return args
+
+    if argv and argv[0] in {"eval", "benchmark"}:
+        command_name = argv[0]
+        if command_name == "benchmark":
+            argv = argv[:1] + (argv[2:] if len(argv) > 1 and argv[1] == "run" else argv[1:])
         parser = argparse.ArgumentParser(description="运行 SDYJ Agent 评测套件")
         parser.add_argument(
             "--live",
@@ -888,8 +1176,29 @@ def parse_args(argv: Any) -> argparse.Namespace:
         parser.add_argument(
             "--output-format",
             default=saved_config.get("output_format", "markdown"),
-            choices=["markdown", "html"],
+            choices=["markdown", "html", "json"],
             help="评测报告输出格式",
+        )
+        parser.add_argument(
+            "--fail-under",
+            type=float,
+            default=None,
+            help="平均分低于该值时返回非 0，适合 CI gate",
+        )
+        parser.add_argument(
+            "--threshold",
+            action="append",
+            help="覆盖单个指标阈值，格式 metric=value，可重复传入",
+        )
+        parser.add_argument(
+            "--compare-summary",
+            help="和历史 eval_summary JSON 比较，出现明显回退时 gate 失败",
+        )
+        parser.add_argument(
+            "--determinism-repeats",
+            type=int,
+            default=1,
+            help="离线模式重复运行次数，用于检查 benchmark 确定性",
         )
         args = parser.parse_args(argv[1:])
         args.command = "eval"
@@ -945,7 +1254,21 @@ def main(argv: Any = None) -> int:
         return 0
 
     if args.command == "inspect-run":
-        return inspect_run(args.run_id, args.output_dir)
+        return inspect_run(args.run_id, args.output_dir, timeline=args.timeline, event_id=args.event_id)
+
+    if args.command == "replay":
+        return replay_run(args.run_id, args.output_dir)
+
+    if args.command == "diff-runs":
+        return diff_runs(args.left, args.right, args.output_dir, as_json=args.json)
+
+    if args.command == "runs":
+        if args.runs_command == "list":
+            return list_runs(args.output_dir, limit=args.limit)
+        return 1
+
+    if args.command == "benchmark-compare":
+        return compare_benchmark_summaries(args.baseline, args.candidate, as_json=args.json)
 
     if args.command == "eval":
         if args.live and not get_api_key_for_provider(args.provider):

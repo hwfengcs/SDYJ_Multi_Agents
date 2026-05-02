@@ -22,7 +22,7 @@ from ..utils.tracing import (
     save_trace,
 )
 from ..workflow.graph import ResearchWorkflow
-from .metrics import evaluate_state
+from .metrics import apply_thresholds, evaluate_state
 from .scenarios import HARD_SCENARIOS, get_scenario
 
 
@@ -175,6 +175,7 @@ def _run_one_scenario(
     max_iterations: int,
     output_format: str,
     output_dir: str,
+    threshold_overrides: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
     trace = create_run_trace(
         query=scenario["query"],
@@ -216,15 +217,17 @@ def _run_one_scenario(
             if isinstance(value, dict):
                 final_state = value
 
-    metrics = evaluate_state(final_state, scenario)
     trace = merge_trace_state(trace, final_state.get("trace"))
+    metrics = evaluate_state(final_state, scenario, trace=trace)
+    threshold_result = apply_thresholds(metrics, scenario, threshold_overrides)
     trace.setdefault("metrics", {}).update(metrics)
+    trace.setdefault("metrics", {})["passed"] = threshold_result["passed"]
     finalize_trace(trace, metrics)
-    trace_path = save_trace(trace, output_dir)
+    trace_path = save_trace(trace, output_dir, final_state=final_state)
 
     scenario_dir = Path(output_dir) / "eval_reports"
     scenario_dir.mkdir(parents=True, exist_ok=True)
-    report_extension = "html" if output_format == "html" else "md"
+    report_extension = "html" if output_format == "html" else "json" if output_format == "json" else "md"
     report_path = scenario_dir / f"{scenario['id']}_{trace['run_id']}.{report_extension}"
     if final_state.get("final_report"):
         with open(report_path, "w", encoding="utf-8") as f:
@@ -235,9 +238,67 @@ def _run_one_scenario(
         "title": scenario["title"],
         "query": scenario["query"],
         "metrics": metrics,
+        "passed": threshold_result["passed"],
+        "thresholds": threshold_result["thresholds"],
+        "failed_thresholds": threshold_result["failed_thresholds"],
         "trace_path": str(trace_path) if trace_path else None,
         "report_path": str(report_path) if final_state.get("final_report") else None,
         "run_id": trace["run_id"],
+    }
+
+
+def _stable_result_fingerprint(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a deterministic fingerprint for repeated offline benchmark runs."""
+    metrics = result.get("metrics") or {}
+    stable_metric_keys = [
+        "scenario_id",
+        "plan_coverage",
+        "section_completeness",
+        "citation_id_coverage",
+        "evidence_count",
+        "citation_count",
+        "tool_success_rate",
+        "grounded_key_finding_rate",
+        "trace_completeness",
+        "overall_score",
+    ]
+    return {
+        "scenario_id": result.get("scenario_id"),
+        "passed": result.get("passed"),
+        "metrics": {key: metrics.get(key) for key in stable_metric_keys},
+        "failed_thresholds": result.get("failed_thresholds", []),
+    }
+
+
+def _compare_summaries(current: Dict[str, Any], baseline: Dict[str, Any]) -> Dict[str, Any]:
+    """Compare current benchmark summary against a saved baseline summary."""
+    baseline_by_id = {item["scenario_id"]: item for item in baseline.get("results", [])}
+    rows = []
+    regressions = []
+    for item in current.get("results", []):
+        scenario_id = item["scenario_id"]
+        old = baseline_by_id.get(scenario_id)
+        if not old:
+            rows.append({"scenario_id": scenario_id, "status": "new"})
+            continue
+        old_score = old.get("metrics", {}).get("overall_score", 0.0)
+        new_score = item.get("metrics", {}).get("overall_score", 0.0)
+        delta = round(new_score - old_score, 4)
+        row = {
+            "scenario_id": scenario_id,
+            "baseline_score": old_score,
+            "current_score": new_score,
+            "delta": delta,
+            "regressed": delta < -0.02,
+        }
+        rows.append(row)
+        if row["regressed"]:
+            regressions.append(row)
+    return {
+        "baseline_path": baseline.get("summary_path"),
+        "rows": rows,
+        "regressions": regressions,
+        "passed": not regressions,
     }
 
 
@@ -251,6 +312,10 @@ def run_evaluation(
     max_iterations: int = 3,
     output_format: str = "markdown",
     output_dir: str = "./outputs",
+    fail_under: Optional[float] = None,
+    threshold_overrides: Optional[Dict[str, float]] = None,
+    compare_summary_path: Optional[str] = None,
+    determinism_repeats: int = 1,
 ) -> Dict[str, Any]:
     """Run the evaluation suite and persist a JSON summary."""
     selected = _select_scenarios(scenario_ids, max_scenarios)
@@ -264,9 +329,53 @@ def run_evaluation(
             max_iterations=max_iterations,
             output_format=output_format,
             output_dir=output_dir,
+            threshold_overrides=threshold_overrides,
         )
         for scenario in selected
     ]
+
+    determinism = {
+        "enabled": determinism_repeats > 1 and not live,
+        "repeats": determinism_repeats,
+        "passed": True,
+        "results": [],
+    }
+    if determinism["enabled"]:
+        for scenario in selected:
+            repeated = [
+                _stable_result_fingerprint(
+                    _run_one_scenario(
+                        scenario=scenario,
+                        live=live,
+                        provider=provider,
+                        model=model,
+                        live_search=live_search,
+                        max_iterations=max_iterations,
+                        output_format=output_format,
+                        output_dir=output_dir,
+                        threshold_overrides=threshold_overrides,
+                    )
+                )
+                for _ in range(determinism_repeats)
+            ]
+            passed = all(item == repeated[0] for item in repeated[1:])
+            determinism["results"].append(
+                {
+                    "scenario_id": scenario["id"],
+                    "passed": passed,
+                    "fingerprints": repeated,
+                }
+            )
+            determinism["passed"] = determinism["passed"] and passed
+
+    failed_scenarios = [item for item in results if not item.get("passed")]
+    average_score = (
+        sum(item["metrics"]["overall_score"] for item in results) / len(results)
+        if results else 0.0
+    )
+    passed = not failed_scenarios and determinism["passed"]
+    if fail_under is not None and average_score < fail_under:
+        passed = False
 
     summary = {
         "created_at": datetime.now().isoformat(),
@@ -275,12 +384,26 @@ def run_evaluation(
         "model": model if live else "fake-eval-llm",
         "live_search": live_search,
         "scenario_count": len(results),
-        "average_score": (
-            sum(item["metrics"]["overall_score"] for item in results) / len(results)
-            if results else 0.0
-        ),
+        "average_score": average_score,
+        "fail_under": fail_under,
+        "passed": passed,
+        "failed_scenarios": [
+            {
+                "scenario_id": item["scenario_id"],
+                "failed_thresholds": item.get("failed_thresholds", []),
+            }
+            for item in failed_scenarios
+        ],
+        "determinism": determinism,
         "results": results,
     }
+
+    if compare_summary_path:
+        with open(compare_summary_path, "r", encoding="utf-8") as f:
+            baseline = json.load(f)
+        comparison = _compare_summaries(summary, baseline)
+        summary["comparison"] = comparison
+        summary["passed"] = summary["passed"] and comparison["passed"]
 
     output = Path(output_dir) / "eval_reports"
     output.mkdir(parents=True, exist_ok=True)

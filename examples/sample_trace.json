@@ -1,77 +1,173 @@
 {
-  "schema_version": "1.0",
-  "run_id": "20260502_025454_73b37862",
+  "schema_version": "2.0",
+  "run_id": "20260502_034741_6c238436",
   "mode": "eval",
   "scenario_id": "agent_reliability_hard",
-  "created_at": "2026-05-02T02:54:54Z",
-  "completed_at": "2026-05-02T02:56:18Z",
+  "created_at": "2026-05-02T03:47:41.000Z",
+  "completed_at": "2026-05-02T03:47:41.120Z",
   "query": "Design a reproducible evaluation plan for a RAG + web + MCP research agent.",
-  "provider": "deepseek",
-  "model": "deepseek-v4-flash",
+  "provider": "fake",
+  "model": "fake-eval-llm",
+  "config": {
+    "max_iterations": 2,
+    "auto_approve": true,
+    "output_format": "markdown"
+  },
   "nodes": [
     {
       "node": "planner",
-      "latency_ms": 7421,
+      "latency_ms": 1,
       "status": "ok",
       "metadata": {
-        "sub_tasks": 4
-      }
+        "sub_tasks": 2
+      },
+      "timestamp": "2026-05-02T03:47:41.010Z"
     },
     {
       "node": "researcher",
-      "latency_ms": 3,
+      "latency_ms": 0,
       "status": "ok",
       "metadata": {
         "iteration_count": 1,
         "evidence_count": 5
-      }
+      },
+      "timestamp": "2026-05-02T03:47:41.040Z"
+    },
+    {
+      "node": "rapporteur",
+      "latency_ms": 4,
+      "status": "ok",
+      "metadata": {
+        "evidence_count": 5,
+        "citation_count": 5,
+        "tool_success_rate": 1.0
+      },
+      "timestamp": "2026-05-02T03:47:41.090Z"
     }
   ],
   "llm_calls": [
     {
       "call_id": "L1",
-      "model": "deepseek-v4-flash",
-      "latency_ms": 1732,
+      "model": "fake-eval-llm",
+      "latency_ms": 0,
       "prompt_chars": 924,
       "response_chars": 8,
-      "usage": {
-        "prompt_tokens": 191,
-        "completion_tokens": 2,
-        "total_tokens": 193
-      },
-      "error": null
+      "prompt_hash": "example-prompt-hash",
+      "response_hash": "example-response-hash",
+      "prompt_preview": "Classify the query...",
+      "response_preview": "RESEARCH",
+      "usage": null,
+      "error": null,
+      "timestamp": "2026-05-02T03:47:41.001Z"
     }
   ],
   "tool_calls": [
     {
+      "tool_call_id": "T1",
       "source": "tavily",
       "query": "agent evaluation trace evidence citation latency cost",
       "task_id": 1,
       "latency_ms": 0,
       "result_count": 4,
-      "error": null
+      "error": null,
+      "timestamp": "2026-05-02T03:47:41.035Z"
     },
     {
+      "tool_call_id": "T2",
       "source": "arxiv",
       "query": "agent evaluation trace evidence citation latency cost",
       "task_id": 1,
       "latency_ms": 0,
       "result_count": 2,
+      "error": null,
+      "timestamp": "2026-05-02T03:47:41.036Z"
+    }
+  ],
+  "events": [
+    {
+      "event_id": "evt_000001",
+      "seq": 1,
+      "event_type": "llm_call",
+      "name": "L1",
+      "node": null,
+      "status": "ok",
+      "timestamp": "2026-05-02T03:47:41.001Z",
+      "latency_ms": 0,
+      "metadata": {
+        "call_id": "L1"
+      },
+      "error": null
+    },
+    {
+      "event_id": "evt_000002",
+      "seq": 2,
+      "event_type": "decision",
+      "name": "route_planner",
+      "node": "coordinator",
+      "status": "ok",
+      "timestamp": "2026-05-02T03:47:41.004Z",
+      "latency_ms": null,
+      "metadata": {},
+      "error": null
+    },
+    {
+      "event_id": "evt_000003",
+      "seq": 3,
+      "event_type": "tool_call",
+      "name": "tavily",
+      "node": "researcher",
+      "status": "ok",
+      "timestamp": "2026-05-02T03:47:41.035Z",
+      "latency_ms": 0,
+      "metadata": {
+        "tool_call_id": "T1"
+      },
       "error": null
     }
   ],
+  "replay_cache": {
+    "llm_calls": [
+      {
+        "call_id": "L1",
+        "model": "fake-eval-llm",
+        "response": "RESEARCH",
+        "error": null
+      }
+    ],
+    "tool_calls": [
+      {
+        "tool_call_id": "T1",
+        "source": "tavily",
+        "query": "agent evaluation trace evidence citation latency cost",
+        "task_id": 1,
+        "result": {
+          "query": "agent evaluation trace evidence citation latency cost",
+          "source": "tavily",
+          "results": []
+        }
+      }
+    ]
+  },
+  "artifacts": {
+    "run_dir": "outputs/runs/20260502_034741_6c238436",
+    "trace": "outputs/runs/20260502_034741_6c238436/trace.json",
+    "events": "outputs/runs/20260502_034741_6c238436/events.jsonl",
+    "final_state": "outputs/runs/20260502_034741_6c238436/state.final.json",
+    "report": "outputs/runs/20260502_034741_6c238436/report.md"
+  },
   "report": {
     "format": "markdown",
-    "source_count": 8,
+    "source_count": 2,
     "evidence_count": 5,
     "citation_count": 5
   },
   "metrics": {
-    "overall_score": 0.8254,
-    "plan_coverage": 0.875,
+    "overall_score": 1.0,
+    "plan_coverage": 1.0,
     "citation_id_coverage": 1.0,
-    "duplicate_url_ratio": 0.7917,
-    "tool_success_rate": 1.0
+    "duplicate_url_ratio": 0.1667,
+    "tool_success_rate": 1.0,
+    "trace_completeness": 1.0
   },
   "errors": []
 }
