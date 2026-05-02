@@ -91,7 +91,7 @@ def _missing_api_key_for(provider: str) -> Optional[str]:
     return env_names[0] if env_names else None
 
 
-def _build_workflow(provider: str, model: str, skip_verification: bool) -> tuple[ResearchWorkflow, Dict[str, Any]]:
+def _build_workflow(provider: str, model: str, skip_verification: bool, enable_reflection: bool) -> tuple[ResearchWorkflow, Dict[str, Any]]:
     """Build a fresh workflow + trace for one run.
 
     A new workflow per run keeps the LangGraph checkpointer simple and avoids
@@ -121,6 +121,7 @@ def _build_workflow(provider: str, model: str, skip_verification: bool) -> tuple
         tavily_api_key=env_cfg.search.tavily_api_key,
         mcp_server_url=env_cfg.search.mcp_server_url,
         mcp_api_key=env_cfg.search.mcp_api_key,
+        enable_reflection=enable_reflection,
     )
     rapporteur = Rapporteur(llm)
     verifier = None if skip_verification else Verifier(llm)
@@ -137,6 +138,7 @@ def _run_research(
     output_dir: str,
     skip_verification: bool,
     max_revisions: int,
+    enable_reflection: bool,
 ) -> Dict[str, Any]:
     """Run the full research workflow and persist the trace bundle.
 
@@ -145,8 +147,15 @@ def _run_research(
     experience but is left as a follow-up — the trace timeline below
     reconstructs the run order, so users can see exactly what happened.
     """
-    workflow, trace = _build_workflow(provider, model, skip_verification)
+    workflow, trace = _build_workflow(provider, model, skip_verification, enable_reflection)
     trace["query"] = query
+    trace.setdefault("config", {}).update(
+        {
+            "enable_reflection": enable_reflection,
+            "skip_verification": skip_verification,
+            "max_revisions": max_revisions,
+        }
+    )
 
     final_state: Dict[str, Any] = {}
     # ``stream_interactive`` with ``auto_approve=True`` exercises the same
@@ -240,6 +249,15 @@ def main() -> None:
             help="Hard cap on Rapporteur revisions when the verifier is on.",
             disabled=not enable_verifier,
         )
+        enable_reflection = st.toggle(
+            "Reflexive Researcher (v0.6)",
+            value=True,
+            help=(
+                "When on, the Researcher rewrites and retries queries that "
+                "returned empty / low-relevance / failing batches. Off = "
+                "single-pass retrieval (v0.5 behavior)."
+            ),
+        )
 
         st.divider()
         missing_key = _missing_api_key_for(provider)
@@ -314,6 +332,7 @@ def main() -> None:
                         output_dir=output_dir,
                         skip_verification=not enable_verifier,
                         max_revisions=max_revisions,
+                        enable_reflection=enable_reflection,
                     )
                     st.session_state["last_result"] = result
                     status.update(

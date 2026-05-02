@@ -61,6 +61,7 @@ class CLIConfig:
     output_format: str = "markdown"  # "markdown", "html", or "json"
     skip_verification: bool = False
     max_revisions: int = DEFAULT_MAX_REVISIONS
+    skip_reflection: bool = False
 
 
 # 配置文件路径
@@ -392,6 +393,18 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
             model=config.model,
             mode="research",
         )
+        # Persist v0.6 toggles into trace.config so deterministic replay
+        # reproduces the same workflow path (researcher reflection,
+        # verifier loop, max_revisions). Without this, a replay would
+        # default to skipping reflection and the recorded LLM call order
+        # could mismatch.
+        trace.setdefault("config", {}).update(
+            {
+                "enable_reflection": not config.skip_reflection,
+                "skip_verification": config.skip_verification,
+                "max_revisions": config.max_revisions,
+            }
+        )
 
         # Create LLM
         console.print(f"[dim]正在初始化 {config.provider.upper()} LLM...[/dim]")
@@ -410,7 +423,8 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
             llm=llm,
             tavily_api_key=env_cfg.search.tavily_api_key,
             mcp_server_url=env_cfg.search.mcp_server_url,
-            mcp_api_key=env_cfg.search.mcp_api_key
+            mcp_api_key=env_cfg.search.mcp_api_key,
+            enable_reflection=not config.skip_reflection,
         )
         rapporteur = Rapporteur(llm)
         verifier = None if config.skip_verification else Verifier(llm)
@@ -948,6 +962,7 @@ def execute_evaluation(args: argparse.Namespace) -> int:
             determinism_repeats=args.determinism_repeats,
             enable_verification=args.enable_verify,
             max_revisions=args.max_revisions,
+            enable_reflection=args.enable_reflect,
         )
 
         table = Table(title="SDYJ Evaluation")
@@ -1039,6 +1054,12 @@ def _add_runtime_options(parser: argparse.ArgumentParser, saved_config: Dict[str
         default=saved_config.get("max_revisions", DEFAULT_MAX_REVISIONS),
         help=f"verifier 不通过时最多修订几次（默认：{DEFAULT_MAX_REVISIONS}）",
     )
+    parser.add_argument(
+        "--no-reflect",
+        action="store_true",
+        default=saved_config.get("skip_reflection", False),
+        help="跳过 v0.6 researcher 反思（一次查询无果就放弃，不重写查询）",
+    )
 
 
 def _create_config_from_args(args: argparse.Namespace) -> CLIConfig:
@@ -1056,6 +1077,7 @@ def _create_config_from_args(args: argparse.Namespace) -> CLIConfig:
         output_format=args.output_format,
         skip_verification=getattr(args, "no_verify", False),
         max_revisions=getattr(args, "max_revisions", DEFAULT_MAX_REVISIONS),
+        skip_reflection=getattr(args, "no_reflect", False),
     )
 
 
@@ -1267,6 +1289,12 @@ def parse_args(argv: Any) -> argparse.Namespace:
             type=int,
             default=DEFAULT_MAX_REVISIONS,
             help=f"verifier 启用时的最大修订次数（默认：{DEFAULT_MAX_REVISIONS}）",
+        )
+        parser.add_argument(
+            "--enable-reflect",
+            action="store_true",
+            default=False,
+            help="启用 v0.6 researcher 反思（弱结果时重写查询并重试，默认关闭以兼容 v0.5 benchmark gate）",
         )
         args = parser.parse_args(argv[1:])
         args.command = "eval"

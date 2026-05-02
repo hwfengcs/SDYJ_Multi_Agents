@@ -5,8 +5,9 @@ This module implements the Researcher agent, which is responsible for
 executing information retrieval tasks.
 """
 
+import json
 import time
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from ..workflow.state import ResearchState, SubTask, SearchResult
 from ..tools.tavily_search import TavilySearch
 from ..tools.arxiv_search import ArxivSearch
@@ -14,7 +15,17 @@ from ..tools.mcp_client import MCPClient
 from ..llm.base import BaseLLM
 from ..prompts.loader import PromptLoader
 from ..utils.evidence import merge_evidence_items, normalize_search_batch
-from ..utils.tracing import record_tool_call
+from ..utils.tracing import record_tool_call, record_trace_event
+
+
+# Below this average relevance score we treat a batch as "weak" and consider
+# triggering reflection. Tavily relevance is in [0, 1]; arXiv has no relevance
+# field so we treat its results as relevance=0.5 for the purpose of this check
+# (see ``_average_relevance`` for the implementation).
+WEAK_RELEVANCE_THRESHOLD = 0.5
+# At or above this fraction of failing tool calls in a single task we always
+# trigger reflection, even if the few successful calls had decent results.
+HIGH_ERROR_RATE_THRESHOLD = 0.5
 
 
 class Researcher:
@@ -34,7 +45,8 @@ class Researcher:
         llm: BaseLLM,
         tavily_api_key: Optional[str] = None,
         mcp_server_url: Optional[str] = None,
-        mcp_api_key: Optional[str] = None
+        mcp_api_key: Optional[str] = None,
+        enable_reflection: bool = True,
     ):
         """
         Initialize the Researcher.
@@ -44,16 +56,29 @@ class Researcher:
             tavily_api_key: Tavily API key (optional)
             mcp_server_url: MCP server URL (optional)
             mcp_api_key: MCP API key (optional)
+            enable_reflection: When True (the default in v0.6+), the
+                researcher inspects the task's results after the first pass
+                and asks the LLM to rewrite weak queries before giving up.
+                Set to False to restore v0.5 single-pass behavior — useful
+                for the v0.5-vs-v0.6 ablation in evaluation runs.
         """
         self.llm = llm
         self.tavily = TavilySearch(tavily_api_key) if tavily_api_key else None
         self.arxiv = ArxivSearch()
         self.mcp = MCPClient(mcp_server_url, mcp_api_key) if mcp_server_url else None
         self.prompt_loader = PromptLoader()
+        self.enable_reflection = enable_reflection
 
     def execute_task(self, state: ResearchState, task: SubTask) -> ResearchState:
         """
         Execute a research task.
+
+        v0.6 behavior: after the scheduled queries run, evaluate the result
+        quality. If results are empty / low relevance / dominated by tool
+        errors, ask the LLM to rewrite the queries and run them once more.
+        Reflection is single-shot per task (controlled by ``_reflected``)
+        so an adversarial source cannot induce an infinite reflection loop.
+        Disable entirely with ``enable_reflection=False``.
 
         Args:
             state: Current research state
@@ -62,11 +87,72 @@ class Researcher:
         Returns:
             Updated state with research results
         """
-        results = []
+        results: List[Dict[str, Any]] = []
+        original_queries = list(task.get('search_queries') or [])
+        sources = list(task.get('sources') or [])
 
-        # Execute searches for each query
-        for query in task.get('search_queries', []):
-            for source in task.get('sources', []):
+        first_pass = self._run_queries(state, task, original_queries, sources)
+        results.extend(first_pass)
+
+        if (
+            self.enable_reflection
+            and not task.get('_reflected')
+            and self._should_reflect(first_pass)
+        ):
+            rewritten = self._reflect_and_rewrite(
+                state=state,
+                task=task,
+                first_pass=first_pass,
+                sources=sources,
+                original_queries=original_queries,
+            )
+            if rewritten:
+                task['_reflected'] = True
+                second_pass = self._run_queries(state, task, rewritten, sources)
+                results.extend(second_pass)
+                # Surface the rewritten queries on the task itself so the
+                # report and the trace both show what was actually executed.
+                task['search_queries'] = original_queries + rewritten
+            else:
+                task['_reflected'] = True
+
+        # Add results to state
+        if 'research_results' not in state:
+            state['research_results'] = []
+
+        state['research_results'].extend(results)
+        evidence_items = state.get('evidence_items') or []
+        for result in results:
+            evidence_items = merge_evidence_items(
+                evidence_items,
+                normalize_search_batch(result),
+            )
+        state['evidence_items'] = evidence_items
+
+        # Mark task as completed
+        if state.get('research_plan'):
+            for t in state['research_plan'].get('sub_tasks', []):
+                if t.get('task_id') == task['task_id']:
+                    t['status'] = 'completed'
+                    break
+
+        return state
+
+    def _run_queries(
+        self,
+        state: ResearchState,
+        task: SubTask,
+        queries: List[str],
+        sources: List[str],
+    ) -> List[Dict[str, Any]]:
+        """Run a list of (query, source) pairs and return raw result batches.
+
+        Pulled out as a helper so the first pass and a reflection-driven
+        retry share the exact same trace-recording / latency-measuring path.
+        """
+        results: List[Dict[str, Any]] = []
+        for query in queries:
+            for source in sources:
                 started = time.perf_counter()
                 result = self._search(query, source)
                 latency_ms = int(round((time.perf_counter() - started) * 1000))
@@ -94,28 +180,213 @@ class Researcher:
                         result_count=0,
                         error="source unavailable or unsupported",
                     )
+        return results
 
-        # Add results to state
-        if 'research_results' not in state:
-            state['research_results'] = []
+    @staticmethod
+    def _should_reflect(batches: List[Dict[str, Any]]) -> bool:
+        """Decide whether the first pass was poor enough to warrant reflection.
 
-        state['research_results'].extend(results)
-        evidence_items = state.get('evidence_items') or []
-        for result in results:
-            evidence_items = merge_evidence_items(
-                evidence_items,
-                normalize_search_batch(result),
+        Returns True when *any* of:
+        - no batches were even produced (sources misconfigured),
+        - every batch returned zero results,
+        - the average relevance score across all hits was below the threshold,
+        - half or more of the batches reported a tool error.
+        """
+        if not batches:
+            return True
+
+        total_hits = sum(len(b.get('results') or []) for b in batches)
+        if total_hits == 0:
+            return True
+
+        error_count = sum(1 for b in batches if b.get('error'))
+        if error_count / len(batches) >= HIGH_ERROR_RATE_THRESHOLD:
+            return True
+
+        avg_relevance = Researcher._average_relevance(batches)
+        if avg_relevance is not None and avg_relevance < WEAK_RELEVANCE_THRESHOLD:
+            return True
+        return False
+
+    @staticmethod
+    def _average_relevance(batches: List[Dict[str, Any]]) -> Optional[float]:
+        """Average relevance across all individual results.
+
+        Sources without a relevance score (e.g. arXiv) contribute a neutral
+        0.5 so they neither force a reflection by themselves nor block one
+        when paired with a clearly-weak Tavily batch.
+        """
+        scores: List[float] = []
+        for batch in batches:
+            for item in batch.get('results') or []:
+                raw = item.get('relevance_score')
+                if isinstance(raw, (int, float)):
+                    scores.append(max(0.0, min(1.0, float(raw))))
+                else:
+                    scores.append(0.5)
+        if not scores:
+            return None
+        return sum(scores) / len(scores)
+
+    def _reflect_and_rewrite(
+        self,
+        state: ResearchState,
+        task: SubTask,
+        first_pass: List[Dict[str, Any]],
+        sources: List[str],
+        original_queries: List[str],
+    ) -> List[str]:
+        """Ask the LLM to diagnose the failure and propose new queries.
+
+        Returns the list of rewritten queries (possibly empty if the LLM
+        gave us nothing usable). The reflection itself is recorded in the
+        trace as an event so it is visible in inspect-run --timeline.
+        """
+        diagnosis_inputs = self._summarize_first_pass(first_pass)
+        evidence_terms = self._collect_known_terms(state)
+
+        try:
+            prompt = self.prompt_loader.load(
+                'researcher_reflect',
+                task_id=task.get('task_id'),
+                task_description=task.get('description', ''),
+                sources=', '.join(sources),
+                failed_queries=original_queries,
+                result_count=diagnosis_inputs['result_count'],
+                avg_relevance=(
+                    f"{diagnosis_inputs['avg_relevance']:.2f}"
+                    if diagnosis_inputs['avg_relevance'] is not None
+                    else 'n/a'
+                ),
+                error_rate=f"{diagnosis_inputs['error_rate']:.2f}",
+                errors=diagnosis_inputs['error_messages'],
+                evidence_terms=evidence_terms,
             )
-        state['evidence_items'] = evidence_items
+        except FileNotFoundError:
+            # If the reflect prompt is missing for any reason, fail open —
+            # we just skip reflection rather than crashing the workflow.
+            return []
 
-        # Mark task as completed
-        if state.get('research_plan'):
-            for t in state['research_plan'].get('sub_tasks', []):
-                if t.get('task_id') == task['task_id']:
-                    t['status'] = 'completed'
-                    break
+        try:
+            response = self.llm.generate(prompt, temperature=0.4, max_tokens=500)
+        except Exception as exc:
+            record_trace_event(
+                state.get('trace'),
+                event_type='reflection',
+                name='researcher_reflect_failed',
+                node='researcher',
+                status='error',
+                metadata={
+                    'task_id': task.get('task_id'),
+                    'error': str(exc),
+                },
+            )
+            return []
 
-        return state
+        rewritten = self._parse_reflection_response(response)
+
+        record_trace_event(
+            state.get('trace'),
+            event_type='reflection',
+            name='researcher_reflect',
+            node='researcher',
+            status='ok' if rewritten else 'noop',
+            input_snapshot={
+                'task_id': task.get('task_id'),
+                'original_queries': original_queries,
+                'result_count': diagnosis_inputs['result_count'],
+                'avg_relevance': diagnosis_inputs['avg_relevance'],
+                'error_rate': diagnosis_inputs['error_rate'],
+            },
+            output_snapshot={
+                'rewritten_queries': rewritten,
+            },
+            metadata={'task_id': task.get('task_id')},
+        )
+
+        # Trace metrics counter so v0.5-vs-v0.6 dashboards can show how
+        # often reflection actually fired.
+        trace = state.get('trace')
+        if trace is not None and rewritten:
+            trace.setdefault('metrics', {})
+            trace['metrics']['reflection_count'] = (
+                int(trace['metrics'].get('reflection_count', 0)) + 1
+            )
+
+        return rewritten
+
+    @staticmethod
+    def _summarize_first_pass(batches: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Compact failure summary for the reflection prompt."""
+        result_count = sum(len(b.get('results') or []) for b in batches)
+        error_messages = [b.get('error') for b in batches if b.get('error')]
+        error_rate = len(error_messages) / len(batches) if batches else 1.0
+        return {
+            'result_count': result_count,
+            'avg_relevance': Researcher._average_relevance(batches),
+            'error_rate': error_rate,
+            'error_messages': error_messages,
+        }
+
+    @staticmethod
+    def _collect_known_terms(state: ResearchState) -> str:
+        """Pull a few representative terms from already-collected evidence.
+
+        Helps the LLM reflection step bias toward terminology the available
+        sources actually index. Keeps the result short so we don't blow the
+        prompt budget.
+        """
+        evidence_items = state.get('evidence_items') or []
+        seen = []
+        for item in evidence_items[:8]:
+            title = (item.get('title') or '').strip()
+            domain = (item.get('domain') or '').strip()
+            if title:
+                seen.append(f"{title} ({domain})" if domain else title)
+        if not seen:
+            return '(no prior evidence yet)'
+        return '; '.join(seen)
+
+    @staticmethod
+    def _parse_reflection_response(response: str) -> List[str]:
+        """Extract ``rewritten_queries`` from the reflection LLM output.
+
+        Tolerant of fenced code blocks and prose preambles. Returns an empty
+        list when the response is unusable (defensive: skipping reflection
+        is always safer than running junk queries).
+        """
+        if not response:
+            return []
+        text = response.strip()
+        if text.startswith('```'):
+            text = text.strip('`')
+            if text.lower().startswith('json'):
+                text = text[4:]
+        start = text.find('{')
+        end = text.rfind('}') + 1
+        if start == -1 or end <= start:
+            return []
+        try:
+            parsed = json.loads(text[start:end])
+        except json.JSONDecodeError:
+            return []
+        rewritten = parsed.get('rewritten_queries') or []
+        if not isinstance(rewritten, list):
+            return []
+        # Strip blanks and de-dup while preserving order.
+        clean: List[str] = []
+        seen_lower = set()
+        for item in rewritten:
+            query = str(item).strip()
+            if not query:
+                continue
+            key = query.lower()
+            if key in seen_lower:
+                continue
+            seen_lower.add(key)
+            clean.append(query)
+        # Two queries is plenty; more means the LLM ignored the prompt.
+        return clean[:2]
 
     def _search(self, query: str, source: str) -> Optional[SearchResult]:
         """

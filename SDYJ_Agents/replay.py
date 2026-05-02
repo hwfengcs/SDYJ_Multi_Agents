@@ -119,9 +119,18 @@ def run_deterministic_replay(
         ReplayLLM(cache.get("llm_calls", []), model=source_trace.get("model") or "replay-llm"),
         replay_trace,
     )
+    # Match the source run's reflection / verification behavior so the
+    # recorded LLM-call order lines up with the workflow path. Mismatching
+    # would leave reflection or verifier prompts trying to consume calls
+    # the source never made.
+    source_config = source_trace.get("config") or {}
+    enable_reflection_replay = bool(source_config.get("enable_reflection", False))
+    skip_verification = bool(source_config.get("skip_verification", True))
+    max_revisions = int(source_config.get("max_revisions") or 0)
+
     coordinator = Coordinator(llm)
     planner = Planner(llm)
-    researcher = Researcher(llm)
+    researcher = Researcher(llm, enable_reflection=enable_reflection_replay)
     tool_calls = cache.get("tool_calls", [])
     researcher.tavily = ReplaySearchTool("tavily", tool_calls)
     researcher.arxiv = ReplaySearchTool("arxiv", tool_calls)
@@ -133,9 +142,6 @@ def run_deterministic_replay(
     # ReplayLLM hands those back in order. Forcing skip=True on a trace
     # that *did* run the verifier would leave the verifier's recorded calls
     # consumed by other nodes and break replay.
-    source_config = source_trace.get("config") or {}
-    skip_verification = bool(source_config.get("skip_verification", True))
-    max_revisions = int(source_config.get("max_revisions") or 0)
     verifier = None if skip_verification else Verifier(llm)
     workflow = ResearchWorkflow(coordinator, planner, researcher, rapporteur, verifier)
 

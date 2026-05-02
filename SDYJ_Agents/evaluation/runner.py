@@ -204,6 +204,7 @@ def _run_one_scenario(
     threshold_overrides: Optional[Dict[str, float]] = None,
     skip_verification: bool = True,
     max_revisions: int = DEFAULT_MAX_REVISIONS,
+    enable_reflection: bool = False,
 ) -> Dict[str, Any]:
     trace = create_run_trace(
         query=scenario["query"],
@@ -212,11 +213,20 @@ def _run_one_scenario(
         mode="eval",
         scenario_id=scenario["id"],
     )
+    # Track which v0.6 features were active so deterministic replay can
+    # reproduce the same workflow path.
+    trace.setdefault("config", {}).update(
+        {
+            "enable_reflection": enable_reflection,
+            "skip_verification": skip_verification,
+            "max_revisions": max_revisions,
+        }
+    )
     llm = _create_llm(live=live, provider=provider, model=model, trace=trace)
 
     coordinator = Coordinator(llm)
     planner = Planner(llm)
-    researcher = Researcher(llm)
+    researcher = Researcher(llm, enable_reflection=enable_reflection)
     if not live_search:
         researcher.tavily = CannedSearchTool("tavily", scenario)
         researcher.arxiv = CannedSearchTool("arxiv", scenario)
@@ -228,6 +238,7 @@ def _run_one_scenario(
             tavily_api_key=env_cfg.search.tavily_api_key,
             mcp_server_url=env_cfg.search.mcp_server_url,
             mcp_api_key=env_cfg.search.mcp_api_key,
+            enable_reflection=enable_reflection,
         )
 
     rapporteur = Rapporteur(llm)
@@ -349,14 +360,15 @@ def run_evaluation(
     determinism_repeats: int = 1,
     enable_verification: bool = False,
     max_revisions: int = DEFAULT_MAX_REVISIONS,
+    enable_reflection: bool = False,
 ) -> Dict[str, Any]:
     """Run the evaluation suite and persist a JSON summary.
 
-    ``enable_verification`` defaults to False so the v0.5 benchmark gates
-    keep working unchanged. Flip it to True to exercise the v0.6
-    self-verifying loop — useful for the v0.5-vs-v0.6 ablation. The flag
-    is recorded in each run's trace.config so downstream comparisons are
-    not confused.
+    ``enable_verification`` and ``enable_reflection`` both default to False
+    so the v0.5 benchmark gates keep working unchanged. Flip either on to
+    exercise the v0.6 self-verifying / self-reflecting agent loops — useful
+    for the v0.5-vs-v0.6 ablation. The flags are recorded in each run's
+    trace.config so downstream comparisons are not confused.
     """
     skip_verification = not enable_verification
     selected = _select_scenarios(scenario_ids, max_scenarios)
@@ -373,6 +385,7 @@ def run_evaluation(
             threshold_overrides=threshold_overrides,
             skip_verification=skip_verification,
             max_revisions=max_revisions,
+            enable_reflection=enable_reflection,
         )
         for scenario in selected
     ]
@@ -399,6 +412,7 @@ def run_evaluation(
                         threshold_overrides=threshold_overrides,
                         skip_verification=skip_verification,
                         max_revisions=max_revisions,
+                        enable_reflection=enable_reflection,
                     )
                 )
                 for _ in range(determinism_repeats)
