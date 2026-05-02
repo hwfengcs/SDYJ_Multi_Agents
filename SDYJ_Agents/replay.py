@@ -125,11 +125,20 @@ def run_deterministic_replay(
     # the source never made.
     source_config = source_trace.get("config") or {}
     enable_reflection_replay = bool(source_config.get("enable_reflection", False))
+    enable_plan_refinement_replay = bool(source_config.get("enable_plan_refinement", False))
     skip_verification = bool(source_config.get("skip_verification", True))
     max_revisions = int(source_config.get("max_revisions") or 0)
+    replay_trace.setdefault("config", {}).update(
+        {
+            "enable_reflection": enable_reflection_replay,
+            "enable_plan_refinement": enable_plan_refinement_replay,
+            "skip_verification": skip_verification,
+            "max_revisions": max_revisions,
+        }
+    )
 
     coordinator = Coordinator(llm)
-    planner = Planner(llm)
+    planner = Planner(llm, enable_plan_refinement=enable_plan_refinement_replay)
     researcher = Researcher(llm, enable_reflection=enable_reflection_replay)
     tool_calls = cache.get("tool_calls", [])
     researcher.tavily = ReplaySearchTool("tavily", tool_calls)

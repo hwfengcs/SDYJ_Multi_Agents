@@ -62,6 +62,7 @@ class CLIConfig:
     skip_verification: bool = False
     max_revisions: int = DEFAULT_MAX_REVISIONS
     skip_reflection: bool = False
+    skip_plan_refinement: bool = False
 
 
 # 配置文件路径
@@ -403,6 +404,7 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
                 "enable_reflection": not config.skip_reflection,
                 "skip_verification": config.skip_verification,
                 "max_revisions": config.max_revisions,
+                "enable_plan_refinement": not config.skip_plan_refinement,
             }
         )
 
@@ -418,7 +420,7 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
         # Create agents
         console.print("[dim]正在初始化智能体...[/dim]")
         coordinator = Coordinator(llm)
-        planner = Planner(llm)
+        planner = Planner(llm, enable_plan_refinement=not config.skip_plan_refinement)
         researcher = Researcher(
             llm=llm,
             tavily_api_key=env_cfg.search.tavily_api_key,
@@ -963,6 +965,7 @@ def execute_evaluation(args: argparse.Namespace) -> int:
             enable_verification=args.enable_verify,
             max_revisions=args.max_revisions,
             enable_reflection=args.enable_reflect,
+            enable_plan_refinement=args.enable_refine_plan,
         )
 
         table = Table(title="SDYJ Evaluation")
@@ -1060,6 +1063,12 @@ def _add_runtime_options(parser: argparse.ArgumentParser, saved_config: Dict[str
         default=saved_config.get("skip_reflection", False),
         help="跳过 v0.6 researcher 反思（一次查询无果就放弃，不重写查询）",
     )
+    parser.add_argument(
+        "--no-refine-plan",
+        action="store_true",
+        default=saved_config.get("skip_plan_refinement", False),
+        help="跳过 v0.6 mid-flight plan refinement（始终按初始计划执行剩余 task）",
+    )
 
 
 def _create_config_from_args(args: argparse.Namespace) -> CLIConfig:
@@ -1078,6 +1087,7 @@ def _create_config_from_args(args: argparse.Namespace) -> CLIConfig:
         skip_verification=getattr(args, "no_verify", False),
         max_revisions=getattr(args, "max_revisions", DEFAULT_MAX_REVISIONS),
         skip_reflection=getattr(args, "no_reflect", False),
+        skip_plan_refinement=getattr(args, "no_refine_plan", False),
     )
 
 
@@ -1295,6 +1305,12 @@ def parse_args(argv: Any) -> argparse.Namespace:
             action="store_true",
             default=False,
             help="启用 v0.6 researcher 反思（弱结果时重写查询并重试，默认关闭以兼容 v0.5 benchmark gate）",
+        )
+        parser.add_argument(
+            "--enable-refine-plan",
+            action="store_true",
+            default=False,
+            help="Enable v0.6 mid-flight plan refinement during eval runs (default off for v0.5-compatible gates).",
         )
         args = parser.parse_args(argv[1:])
         args.command = "eval"

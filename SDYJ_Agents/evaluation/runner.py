@@ -205,6 +205,7 @@ def _run_one_scenario(
     skip_verification: bool = True,
     max_revisions: int = DEFAULT_MAX_REVISIONS,
     enable_reflection: bool = False,
+    enable_plan_refinement: bool = False,
 ) -> Dict[str, Any]:
     trace = create_run_trace(
         query=scenario["query"],
@@ -218,6 +219,7 @@ def _run_one_scenario(
     trace.setdefault("config", {}).update(
         {
             "enable_reflection": enable_reflection,
+            "enable_plan_refinement": enable_plan_refinement,
             "skip_verification": skip_verification,
             "max_revisions": max_revisions,
         }
@@ -225,7 +227,7 @@ def _run_one_scenario(
     llm = _create_llm(live=live, provider=provider, model=model, trace=trace)
 
     coordinator = Coordinator(llm)
-    planner = Planner(llm)
+    planner = Planner(llm, enable_plan_refinement=enable_plan_refinement)
     researcher = Researcher(llm, enable_reflection=enable_reflection)
     if not live_search:
         researcher.tavily = CannedSearchTool("tavily", scenario)
@@ -361,6 +363,7 @@ def run_evaluation(
     enable_verification: bool = False,
     max_revisions: int = DEFAULT_MAX_REVISIONS,
     enable_reflection: bool = False,
+    enable_plan_refinement: bool = False,
 ) -> Dict[str, Any]:
     """Run the evaluation suite and persist a JSON summary.
 
@@ -386,6 +389,7 @@ def run_evaluation(
             skip_verification=skip_verification,
             max_revisions=max_revisions,
             enable_reflection=enable_reflection,
+            enable_plan_refinement=enable_plan_refinement,
         )
         for scenario in selected
     ]
@@ -442,6 +446,9 @@ def run_evaluation(
         "provider": provider if live else "fake",
         "model": model if live else "fake-eval-llm",
         "live_search": live_search,
+        "enable_verification": enable_verification,
+        "enable_reflection": enable_reflection,
+        "enable_plan_refinement": enable_plan_refinement,
         "scenario_count": len(results),
         "average_score": average_score,
         "fail_under": fail_under,

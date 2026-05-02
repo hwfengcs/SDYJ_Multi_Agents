@@ -27,7 +27,7 @@ def test_parse_utility_commands_without_api_key():
     info = parse_args(["config-info"])
     inspect = parse_args(["inspect-run", "abc123"])
     inspect_timeline = parse_args(["inspect-run", "abc123", "--timeline", "--event", "evt_000001"])
-    eval_args = parse_args(["eval", "--max-scenarios", "1"])
+    eval_args = parse_args(["eval", "--max-scenarios", "1", "--enable-refine-plan"])
     benchmark_args = parse_args(["benchmark", "run", "--fail-under", "0.7", "--determinism-repeats", "2"])
     replay_args = parse_args(["replay", "abc123"])
     diff_args = parse_args(["diff-runs", "run-a", "run-b", "--json"])
@@ -42,6 +42,7 @@ def test_parse_utility_commands_without_api_key():
     assert inspect_timeline.event_id == "evt_000001"
     assert eval_args.command == "eval"
     assert eval_args.max_scenarios == 1
+    assert eval_args.enable_refine_plan is True
     assert benchmark_args.command == "eval"
     assert benchmark_args.fail_under == 0.7
     assert benchmark_args.determinism_repeats == 2

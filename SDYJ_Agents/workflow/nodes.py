@@ -204,6 +204,12 @@ class WorkflowNodes:
                 state = self.researcher.execute_task(state, next_task)
                 state['current_task'] = next_task
                 state['iteration_count'] += 1
+                # After the task is done, give the planner a chance to
+                # refine the *remaining* sub-tasks based on the evidence
+                # we just collected. Refinement is one-shot per run
+                # (guarded by ``state['plan_refined']``) so an unstable
+                # planner cannot churn the plan indefinitely.
+                self._maybe_refine_plan(state)
             else:
                 # No more tasks
                 state['needs_more_research'] = False
@@ -217,8 +223,65 @@ class WorkflowNodes:
                 metadata={
                     "iteration_count": state.get("iteration_count", 0),
                     "evidence_count": len(state.get("evidence_items") or []),
+                    "plan_refined": state.get("plan_refined", False),
                 },
             )
+
+    def _maybe_refine_plan(self, state: Dict[str, Any]) -> None:
+        """Trigger Planner.refine_plan when we have enough signal."""
+        if state.get('plan_refined'):
+            return
+        if not getattr(self.planner, 'enable_plan_refinement', False):
+            return
+        plan = state.get('research_plan') or {}
+        sub_tasks = plan.get('sub_tasks') or []
+        completed = sum(1 for t in sub_tasks if t.get('status') == 'completed')
+        remaining = sum(1 for t in sub_tasks if t.get('status') != 'completed')
+        if remaining == 0:
+            return
+        if completed < int(getattr(self.planner, 'refine_after_n_tasks', 2)):
+            return
+
+        before_subtask_ids = [t.get('task_id') for t in sub_tasks]
+        started = time.perf_counter()
+        try:
+            self.planner.refine_plan(state)
+        finally:
+            duration_ms = int(round((time.perf_counter() - started) * 1000))
+            after_plan = state.get('research_plan') or {}
+            after_subtasks = after_plan.get('sub_tasks') or []
+            after_subtask_ids = [t.get('task_id') for t in after_subtasks]
+            added = [tid for tid in after_subtask_ids if tid not in before_subtask_ids]
+            removed = [tid for tid in before_subtask_ids if tid not in after_subtask_ids]
+            record_trace_event(
+                state.get('trace'),
+                event_type='plan_refinement',
+                name='planner_refine',
+                node='researcher',
+                latency_ms=duration_ms,
+                input_snapshot={
+                    'completed_subtasks': completed,
+                    'remaining_subtasks': remaining,
+                },
+                output_snapshot={
+                    'added_task_ids': added,
+                    'removed_task_ids': removed,
+                    'rationale': (after_plan.get('history') or [{}])[-1].get('rationale')
+                    if after_plan.get('history')
+                    else None,
+                },
+                metadata={'plan_refined': bool(state.get('plan_refined'))},
+            )
+            trace = state.get('trace')
+            if trace is not None:
+                metrics = trace.setdefault('metrics', {})
+                metrics['plan_refinement_count'] = int(
+                    metrics.get('plan_refinement_count', 0)
+                ) + (1 if state.get('plan_refined') else 0)
+                if added:
+                    metrics['plan_refinement_added_tasks'] = len(added)
+                if removed:
+                    metrics['plan_refinement_removed_tasks'] = len(removed)
 
     def rapporteur_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """

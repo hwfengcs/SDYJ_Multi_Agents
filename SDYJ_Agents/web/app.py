@@ -91,7 +91,7 @@ def _missing_api_key_for(provider: str) -> Optional[str]:
     return env_names[0] if env_names else None
 
 
-def _build_workflow(provider: str, model: str, skip_verification: bool, enable_reflection: bool) -> tuple[ResearchWorkflow, Dict[str, Any]]:
+def _build_workflow(provider: str, model: str, skip_verification: bool, enable_reflection: bool, enable_plan_refinement: bool) -> tuple[ResearchWorkflow, Dict[str, Any]]:
     """Build a fresh workflow + trace for one run.
 
     A new workflow per run keeps the LangGraph checkpointer simple and avoids
@@ -115,7 +115,7 @@ def _build_workflow(provider: str, model: str, skip_verification: bool, enable_r
     )
     llm = InstrumentedLLM(base_llm, trace)
     coordinator = Coordinator(llm)
-    planner = Planner(llm)
+    planner = Planner(llm, enable_plan_refinement=enable_plan_refinement)
     researcher = Researcher(
         llm=llm,
         tavily_api_key=env_cfg.search.tavily_api_key,
@@ -139,6 +139,7 @@ def _run_research(
     skip_verification: bool,
     max_revisions: int,
     enable_reflection: bool,
+    enable_plan_refinement: bool,
 ) -> Dict[str, Any]:
     """Run the full research workflow and persist the trace bundle.
 
@@ -147,13 +148,14 @@ def _run_research(
     experience but is left as a follow-up — the trace timeline below
     reconstructs the run order, so users can see exactly what happened.
     """
-    workflow, trace = _build_workflow(provider, model, skip_verification, enable_reflection)
+    workflow, trace = _build_workflow(provider, model, skip_verification, enable_reflection, enable_plan_refinement)
     trace["query"] = query
     trace.setdefault("config", {}).update(
         {
             "enable_reflection": enable_reflection,
             "skip_verification": skip_verification,
             "max_revisions": max_revisions,
+            "enable_plan_refinement": enable_plan_refinement,
         }
     )
 
@@ -258,6 +260,16 @@ def main() -> None:
                 "single-pass retrieval (v0.5 behavior)."
             ),
         )
+        enable_plan_refinement = st.toggle(
+            "Plan refinement (v0.6)",
+            value=True,
+            help=(
+                "When on, the Planner revisits the remaining sub-tasks "
+                "after the first 2 complete and may delete redundant "
+                "ones, tighten queries, or add a follow-up sub-task that "
+                "the evidence revealed. One-shot per run."
+            ),
+        )
 
         st.divider()
         missing_key = _missing_api_key_for(provider)
@@ -333,6 +345,7 @@ def main() -> None:
                         skip_verification=not enable_verifier,
                         max_revisions=max_revisions,
                         enable_reflection=enable_reflection,
+                        enable_plan_refinement=enable_plan_refinement,
                     )
                     st.session_state["last_result"] = result
                     status.update(

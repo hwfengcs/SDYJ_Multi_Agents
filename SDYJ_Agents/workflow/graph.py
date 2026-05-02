@@ -162,6 +162,7 @@ class ResearchWorkflow:
         initial_state.setdefault("revision_count", 0)
         initial_state.setdefault("verification_history", [])
         initial_state.setdefault("verification_result", None)
+        initial_state.setdefault("plan_refined", False)
         initial_state["max_revisions"] = (
             max_revisions if max_revisions is not None else DEFAULT_MAX_REVISIONS
         )
