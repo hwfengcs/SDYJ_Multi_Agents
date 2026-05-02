@@ -39,6 +39,7 @@ from SDYJ_Agents.agents.coordinator import Coordinator  # noqa: E402
 from SDYJ_Agents.agents.planner import Planner  # noqa: E402
 from SDYJ_Agents.agents.rapporteur import Rapporteur  # noqa: E402
 from SDYJ_Agents.agents.researcher import Researcher  # noqa: E402
+from SDYJ_Agents.agents.verifier import DEFAULT_MAX_REVISIONS, Verifier  # noqa: E402
 from SDYJ_Agents.llm.factory import LLMFactory  # noqa: E402
 from SDYJ_Agents.utils.config import load_config_from_env  # noqa: E402
 from SDYJ_Agents.utils.tracing import (  # noqa: E402
@@ -90,7 +91,7 @@ def _missing_api_key_for(provider: str) -> Optional[str]:
     return env_names[0] if env_names else None
 
 
-def _build_workflow(provider: str, model: str) -> tuple[ResearchWorkflow, Dict[str, Any]]:
+def _build_workflow(provider: str, model: str, skip_verification: bool) -> tuple[ResearchWorkflow, Dict[str, Any]]:
     """Build a fresh workflow + trace for one run.
 
     A new workflow per run keeps the LangGraph checkpointer simple and avoids
@@ -122,7 +123,8 @@ def _build_workflow(provider: str, model: str) -> tuple[ResearchWorkflow, Dict[s
         mcp_api_key=env_cfg.search.mcp_api_key,
     )
     rapporteur = Rapporteur(llm)
-    workflow = ResearchWorkflow(coordinator, planner, researcher, rapporteur)
+    verifier = None if skip_verification else Verifier(llm)
+    workflow = ResearchWorkflow(coordinator, planner, researcher, rapporteur, verifier)
     return workflow, trace
 
 
@@ -133,6 +135,8 @@ def _run_research(
     max_iterations: int,
     output_format: str,
     output_dir: str,
+    skip_verification: bool,
+    max_revisions: int,
 ) -> Dict[str, Any]:
     """Run the full research workflow and persist the trace bundle.
 
@@ -141,7 +145,7 @@ def _run_research(
     experience but is left as a follow-up — the trace timeline below
     reconstructs the run order, so users can see exactly what happened.
     """
-    workflow, trace = _build_workflow(provider, model)
+    workflow, trace = _build_workflow(provider, model, skip_verification)
     trace["query"] = query
 
     final_state: Dict[str, Any] = {}
@@ -153,6 +157,8 @@ def _run_research(
         auto_approve=True,
         output_format=output_format,
         trace=trace,
+        skip_verification=skip_verification,
+        max_revisions=max_revisions,
     ):
         for value in update.values():
             if isinstance(value, dict):
@@ -214,6 +220,25 @@ def main() -> None:
             "Output directory",
             value="./outputs",
             help="Where the run bundle (trace, events, report) is saved.",
+        )
+
+        st.divider()
+        enable_verifier = st.toggle(
+            "Self-verifying loop (v0.6)",
+            value=True,
+            help=(
+                "When on, the Verifier agent grades the report against the "
+                "evidence and may trigger up to N revisions when grounding is "
+                "weak. Off = v0.5 behavior (single-pass, no critique)."
+            ),
+        )
+        max_revisions = st.slider(
+            "Max revisions",
+            min_value=0,
+            max_value=4,
+            value=DEFAULT_MAX_REVISIONS,
+            help="Hard cap on Rapporteur revisions when the verifier is on.",
+            disabled=not enable_verifier,
         )
 
         st.divider()
@@ -287,6 +312,8 @@ def main() -> None:
                         max_iterations=max_iterations,
                         output_format=output_format,
                         output_dir=output_dir,
+                        skip_verification=not enable_verifier,
+                        max_revisions=max_revisions,
                     )
                     st.session_state["last_result"] = result
                     status.update(

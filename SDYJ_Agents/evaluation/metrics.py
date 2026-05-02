@@ -171,6 +171,23 @@ def evaluate_state(
         **evidence_metrics,
     }
 
+    # Surface v0.6 verifier-loop metrics whenever they are present so they
+    # show up alongside the existing scenario metrics in benchmark summaries
+    # and CI gates. They are pulled from trace.metrics (the source of truth)
+    # rather than recomputed.
+    trace_metrics = (trace or {}).get("metrics") or {}
+    for key in (
+        "verifier_overall_quality",
+        "verifier_should_revise",
+        "verifier_weakest_dimension",
+        "verifier_revision_count",
+    ):
+        if key in trace_metrics:
+            metrics[key] = trace_metrics[key]
+    # Also expose the rapporteur revision count when set by the workflow.
+    if "revision_count" in trace_metrics:
+        metrics["revision_count"] = trace_metrics["revision_count"]
+
     # A compact score for dashboards. Keep the raw metrics visible for real review.
     metrics["overall_score"] = round(
         0.2 * metrics["plan_coverage"]

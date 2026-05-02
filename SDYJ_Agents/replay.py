@@ -11,6 +11,7 @@ from .agents.coordinator import Coordinator
 from .agents.planner import Planner
 from .agents.rapporteur import Rapporteur
 from .agents.researcher import Researcher
+from .agents.verifier import Verifier
 from .evaluation.metrics import evaluate_state
 from .evaluation.scenarios import get_scenario
 from .llm.base import BaseLLM
@@ -126,7 +127,17 @@ def run_deterministic_replay(
     researcher.arxiv = ReplaySearchTool("arxiv", tool_calls)
     researcher.mcp = ReplaySearchTool("mcp", tool_calls)
     rapporteur = Rapporteur(llm)
-    workflow = ResearchWorkflow(coordinator, planner, researcher, rapporteur)
+    # Replay should reuse whatever verification config the source run used.
+    # That keeps the recorded LLM call order intact: the verifier may have
+    # made one or more LLM calls during the original run, and the
+    # ReplayLLM hands those back in order. Forcing skip=True on a trace
+    # that *did* run the verifier would leave the verifier's recorded calls
+    # consumed by other nodes and break replay.
+    source_config = source_trace.get("config") or {}
+    skip_verification = bool(source_config.get("skip_verification", True))
+    max_revisions = int(source_config.get("max_revisions") or 0)
+    verifier = None if skip_verification else Verifier(llm)
+    workflow = ResearchWorkflow(coordinator, planner, researcher, rapporteur, verifier)
 
     final_state: Dict[str, Any] = {}
     for update in workflow.stream_interactive(
@@ -135,6 +146,8 @@ def run_deterministic_replay(
         auto_approve=True,
         output_format=(source_trace.get("report") or {}).get("format", "markdown"),
         trace=replay_trace,
+        skip_verification=skip_verification,
+        max_revisions=max_revisions,
     ):
         for value in update.values():
             if isinstance(value, dict):

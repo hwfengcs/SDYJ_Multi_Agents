@@ -42,6 +42,7 @@ from ..agents.coordinator import Coordinator
 from ..agents.planner import Planner
 from ..agents.researcher import Researcher
 from ..agents.rapporteur import Rapporteur
+from ..agents.verifier import DEFAULT_MAX_REVISIONS, Verifier
 from ..workflow.graph import ResearchWorkflow
 
 console = Console()
@@ -58,6 +59,8 @@ class CLIConfig:
     output_dir: str = "./outputs"
     show_steps: bool = False
     output_format: str = "markdown"  # "markdown", "html", or "json"
+    skip_verification: bool = False
+    max_revisions: int = DEFAULT_MAX_REVISIONS
 
 
 # 配置文件路径
@@ -410,10 +413,11 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
             mcp_api_key=env_cfg.search.mcp_api_key
         )
         rapporteur = Rapporteur(llm)
+        verifier = None if config.skip_verification else Verifier(llm)
 
         # Create workflow
         console.print("[dim]正在设置研究工作流...[/dim]\n")
-        workflow = ResearchWorkflow(coordinator, planner, researcher, rapporteur)
+        workflow = ResearchWorkflow(coordinator, planner, researcher, rapporteur, verifier)
 
         # Run workflow
         print_separator("-")
@@ -428,7 +432,9 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
             auto_approve=config.auto_approve,
             human_approval_callback=human_approval_callback if not config.auto_approve else None,
             output_format=config.output_format,
-            trace=trace
+            trace=trace,
+            skip_verification=config.skip_verification,
+            max_revisions=config.max_revisions,
         )
 
         for state_update in stream_iter:
@@ -940,6 +946,8 @@ def execute_evaluation(args: argparse.Namespace) -> int:
             threshold_overrides=_parse_threshold_overrides(args.threshold),
             compare_summary_path=args.compare_summary,
             determinism_repeats=args.determinism_repeats,
+            enable_verification=args.enable_verify,
+            max_revisions=args.max_revisions,
         )
 
         table = Table(title="SDYJ Evaluation")
@@ -1019,6 +1027,18 @@ def _add_runtime_options(parser: argparse.ArgumentParser, saved_config: Dict[str
         default=saved_config.get("show_steps", False),
         help="显示详细执行步骤"
     )
+    parser.add_argument(
+        "--no-verify",
+        action="store_true",
+        default=saved_config.get("skip_verification", False),
+        help="跳过 v0.6 verifier loop（不对报告做自动质量评分与修订）",
+    )
+    parser.add_argument(
+        "--max-revisions",
+        type=int,
+        default=saved_config.get("max_revisions", DEFAULT_MAX_REVISIONS),
+        help=f"verifier 不通过时最多修订几次（默认：{DEFAULT_MAX_REVISIONS}）",
+    )
 
 
 def _create_config_from_args(args: argparse.Namespace) -> CLIConfig:
@@ -1034,6 +1054,8 @@ def _create_config_from_args(args: argparse.Namespace) -> CLIConfig:
         output_dir=args.output_dir,
         show_steps=args.show_steps,
         output_format=args.output_format,
+        skip_verification=getattr(args, "no_verify", False),
+        max_revisions=getattr(args, "max_revisions", DEFAULT_MAX_REVISIONS),
     )
 
 
@@ -1233,6 +1255,18 @@ def parse_args(argv: Any) -> argparse.Namespace:
             type=int,
             default=1,
             help="离线模式重复运行次数，用于检查 benchmark 确定性",
+        )
+        parser.add_argument(
+            "--enable-verify",
+            action="store_true",
+            default=False,
+            help="启用 v0.6 verifier loop 评估报告质量并触发自动修订（默认关闭以兼容 v0.5 benchmark gate）",
+        )
+        parser.add_argument(
+            "--max-revisions",
+            type=int,
+            default=DEFAULT_MAX_REVISIONS,
+            help=f"verifier 启用时的最大修订次数（默认：{DEFAULT_MAX_REVISIONS}）",
         )
         args = parser.parse_args(argv[1:])
         args.command = "eval"

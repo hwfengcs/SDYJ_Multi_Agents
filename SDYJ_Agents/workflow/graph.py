@@ -12,6 +12,7 @@ from ..agents.coordinator import Coordinator
 from ..agents.planner import Planner
 from ..agents.researcher import Researcher
 from ..agents.rapporteur import Rapporteur
+from ..agents.verifier import DEFAULT_MAX_REVISIONS, Verifier
 from ..utils.tracing import record_decision
 
 
@@ -19,7 +20,8 @@ def create_research_graph(
     coordinator: Coordinator,
     planner: Planner,
     researcher: Researcher,
-    rapporteur: Rapporteur
+    rapporteur: Rapporteur,
+    verifier: Optional[Verifier] = None,
 ):
     """
     Create the research workflow graph.
@@ -29,12 +31,16 @@ def create_research_graph(
         planner: Planner agent instance
         researcher: Researcher agent instance
         rapporteur: Rapporteur agent instance
+        verifier: Optional Verifier agent (v0.6+). When provided the graph
+            grows a critique-revise loop after the rapporteur. When ``None``
+            the verifier node is wired in but short-circuits to END,
+            preserving v0.5 behavior.
 
     Returns:
         Compiled LangGraph workflow
     """
     # Create workflow nodes
-    nodes = WorkflowNodes(coordinator, planner, researcher, rapporteur)
+    nodes = WorkflowNodes(coordinator, planner, researcher, rapporteur, verifier)
 
     # Initialize state graph
     workflow = StateGraph(dict)  # Use dict instead of TypedDict for compatibility
@@ -45,6 +51,7 @@ def create_research_graph(
     workflow.add_node("human_review", nodes.human_review_node)
     workflow.add_node("researcher", nodes.researcher_node)
     workflow.add_node("rapporteur", nodes.rapporteur_node)
+    workflow.add_node("verifier", nodes.verifier_node)
 
     # Add edges from START instead of using set_entry_point
     workflow.add_edge(START, "coordinator")
@@ -82,8 +89,19 @@ def create_research_graph(
         }
     )
 
-    # Rapporteur -> END
-    workflow.add_edge("rapporteur", END)
+    # Rapporteur -> Verifier (always; verifier may be a no-op)
+    workflow.add_edge("rapporteur", "verifier")
+
+    # Verifier -> conditional edge: either accept and end, or loop back to
+    # the rapporteur for one more pass with the critique hints applied.
+    workflow.add_conditional_edges(
+        "verifier",
+        nodes.should_revise_or_end,
+        {
+            "end": END,
+            "rapporteur": "rapporteur",
+        }
+    )
 
     # Compile the graph with checkpointer
     # Add interrupt before human_review for human-in-the-loop
@@ -106,7 +124,8 @@ class ResearchWorkflow:
         coordinator: Coordinator,
         planner: Planner,
         researcher: Researcher,
-        rapporteur: Rapporteur
+        rapporteur: Rapporteur,
+        verifier: Optional[Verifier] = None,
     ):
         """
         Initialize the research workflow.
@@ -116,14 +135,40 @@ class ResearchWorkflow:
             planner: Planner agent
             researcher: Researcher agent
             rapporteur: Rapporteur agent
+            verifier: Optional Verifier agent for the v0.6 critique-revise
+                loop. ``None`` keeps the v0.5 behavior (no verification).
         """
         self.coordinator = coordinator
         self.planner = planner
         self.researcher = researcher
         self.rapporteur = rapporteur
+        self.verifier = verifier
         self.graph = create_research_graph(
-            coordinator, planner, researcher, rapporteur
+            coordinator, planner, researcher, rapporteur, verifier
         )
+
+    def _seed_verifier_state(
+        self,
+        initial_state: dict,
+        skip_verification: Optional[bool],
+        max_revisions: Optional[int],
+    ) -> dict:
+        """Populate v0.6 verifier fields on the initial state.
+
+        Centralized so ``run`` / ``stream`` / ``stream_interactive`` all stamp
+        the same defaults. ``skip_verification`` is True when no verifier was
+        wired in, so the workflow node short-circuits cleanly.
+        """
+        initial_state.setdefault("revision_count", 0)
+        initial_state.setdefault("verification_history", [])
+        initial_state.setdefault("verification_result", None)
+        initial_state["max_revisions"] = (
+            max_revisions if max_revisions is not None else DEFAULT_MAX_REVISIONS
+        )
+        if skip_verification is None:
+            skip_verification = self.verifier is None
+        initial_state["skip_verification"] = bool(skip_verification)
+        return initial_state
 
     def run(
         self,
@@ -131,7 +176,9 @@ class ResearchWorkflow:
         max_iterations: Optional[int] = None,
         auto_approve: bool = False,
         output_format: str = "markdown",
-        trace: Optional[dict] = None
+        trace: Optional[dict] = None,
+        skip_verification: Optional[bool] = None,
+        max_revisions: Optional[int] = None,
     ) -> dict:
         """
         Run the research workflow.
@@ -141,6 +188,10 @@ class ResearchWorkflow:
             max_iterations: Maximum number of research iterations
             auto_approve: Whether to auto-approve the research plan
             output_format: Output format for the final report ("markdown" or "html")
+            skip_verification: Bypass the verifier loop. Defaults to True
+                when this workflow has no Verifier wired in.
+            max_revisions: Hard cap on rapporteur revisions. Defaults to
+                ``DEFAULT_MAX_REVISIONS`` from ``agents/verifier.py``.
 
         Returns:
             Final research state
@@ -153,12 +204,16 @@ class ResearchWorkflow:
                     "max_iterations": max_iterations,
                     "auto_approve": auto_approve,
                     "output_format": output_format,
+                    "skip_verification": skip_verification if skip_verification is not None else (self.verifier is None),
+                    "max_revisions": max_revisions if max_revisions is not None else DEFAULT_MAX_REVISIONS,
                 }
             )
             initial_state['trace'] = trace
 
         if max_iterations:
             initial_state['max_iterations'] = max_iterations
+
+        initial_state = self._seed_verifier_state(initial_state, skip_verification, max_revisions)
 
         # Run the graph with thread configuration for checkpointer
         thread_id = trace.get("run_id", "1") if trace else "1"
@@ -173,7 +228,9 @@ class ResearchWorkflow:
         max_iterations: Optional[int] = None,
         auto_approve: bool = False,
         output_format: str = "markdown",
-        trace: Optional[dict] = None
+        trace: Optional[dict] = None,
+        skip_verification: Optional[bool] = None,
+        max_revisions: Optional[int] = None,
     ):
         """
         Stream the research workflow execution.
@@ -195,12 +252,16 @@ class ResearchWorkflow:
                     "max_iterations": max_iterations,
                     "auto_approve": auto_approve,
                     "output_format": output_format,
+                    "skip_verification": skip_verification if skip_verification is not None else (self.verifier is None),
+                    "max_revisions": max_revisions if max_revisions is not None else DEFAULT_MAX_REVISIONS,
                 }
             )
             initial_state['trace'] = trace
 
         if max_iterations:
             initial_state['max_iterations'] = max_iterations
+
+        initial_state = self._seed_verifier_state(initial_state, skip_verification, max_revisions)
 
         # Stream the graph execution with thread configuration for checkpointer
         thread_id = trace.get("run_id", "1") if trace else "1"
@@ -215,7 +276,9 @@ class ResearchWorkflow:
         auto_approve: bool = False,
         human_approval_callback = None,
         output_format: str = "markdown",
-        trace: Optional[dict] = None
+        trace: Optional[dict] = None,
+        skip_verification: Optional[bool] = None,
+        max_revisions: Optional[int] = None,
     ):
         """
         Stream the research workflow execution with interactive human approval.
@@ -239,12 +302,16 @@ class ResearchWorkflow:
                     "max_iterations": max_iterations,
                     "auto_approve": auto_approve,
                     "output_format": output_format,
+                    "skip_verification": skip_verification if skip_verification is not None else (self.verifier is None),
+                    "max_revisions": max_revisions if max_revisions is not None else DEFAULT_MAX_REVISIONS,
                 }
             )
             initial_state['trace'] = trace
 
         if max_iterations:
             initial_state['max_iterations'] = max_iterations
+
+        initial_state = self._seed_verifier_state(initial_state, skip_verification, max_revisions)
 
         thread_id = trace.get("run_id", "1") if trace else "1"
         config = {"configurable": {"thread_id": thread_id}}

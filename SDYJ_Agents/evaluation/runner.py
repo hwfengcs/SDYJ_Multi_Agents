@@ -11,6 +11,7 @@ from ..agents.coordinator import Coordinator
 from ..agents.planner import Planner
 from ..agents.rapporteur import Rapporteur
 from ..agents.researcher import Researcher
+from ..agents.verifier import DEFAULT_MAX_REVISIONS, Verifier
 from ..llm.base import BaseLLM
 from ..llm.factory import LLMFactory
 from ..utils.config import load_config_from_env
@@ -95,6 +96,31 @@ class FakeEvalLLM(BaseLLM):
             )
         if "Evaluate whether the gathered research context is sufficient" in prompt:
             return "YES"
+        if "claim_evidence_alignment" in prompt and "Output schema" in prompt:
+            # Verifier critique prompt. The fake LLM has no judgment, so we
+            # return a passing critique to keep the offline benchmark
+            # deterministic. Tests that exercise the failing/revising path
+            # use a dedicated scripted LLM instead (see tests/test_verifier.py).
+            return json.dumps(
+                {
+                    "scores": {
+                        "claim_evidence_alignment": 0.92,
+                        "citation_completeness": 0.9,
+                        "factual_consistency": 0.91,
+                        "coverage": 0.9,
+                    },
+                    "overall_quality": 0.91,
+                    "should_revise": False,
+                    "weakest_dimension": "citation_completeness",
+                    "revision_hints": [],
+                    "summary": "Report is well-grounded; no revision needed.",
+                }
+            )
+        if "Revision rules" in prompt:
+            # Rapporteur revise prompt. If the offline benchmark ever lands
+            # here, we return a placeholder so the workflow finishes; in
+            # practice the verifier branch above should keep us out of revise.
+            return "# Revised report\n\nKey claims are now grounded. [E1] [E2]"
         if "必须严格按照以下JSON格式输出" in prompt:
             return json.dumps(
                 {
@@ -176,6 +202,8 @@ def _run_one_scenario(
     output_format: str,
     output_dir: str,
     threshold_overrides: Optional[Dict[str, float]] = None,
+    skip_verification: bool = True,
+    max_revisions: int = DEFAULT_MAX_REVISIONS,
 ) -> Dict[str, Any]:
     trace = create_run_trace(
         query=scenario["query"],
@@ -203,7 +231,8 @@ def _run_one_scenario(
         )
 
     rapporteur = Rapporteur(llm)
-    workflow = ResearchWorkflow(coordinator, planner, researcher, rapporteur)
+    verifier = None if skip_verification else Verifier(llm)
+    workflow = ResearchWorkflow(coordinator, planner, researcher, rapporteur, verifier)
 
     final_state: Dict[str, Any] = {}
     for update in workflow.stream_interactive(
@@ -212,6 +241,8 @@ def _run_one_scenario(
         auto_approve=True,
         output_format=output_format,
         trace=trace,
+        skip_verification=skip_verification,
+        max_revisions=max_revisions,
     ):
         for value in update.values():
             if isinstance(value, dict):
@@ -316,8 +347,18 @@ def run_evaluation(
     threshold_overrides: Optional[Dict[str, float]] = None,
     compare_summary_path: Optional[str] = None,
     determinism_repeats: int = 1,
+    enable_verification: bool = False,
+    max_revisions: int = DEFAULT_MAX_REVISIONS,
 ) -> Dict[str, Any]:
-    """Run the evaluation suite and persist a JSON summary."""
+    """Run the evaluation suite and persist a JSON summary.
+
+    ``enable_verification`` defaults to False so the v0.5 benchmark gates
+    keep working unchanged. Flip it to True to exercise the v0.6
+    self-verifying loop — useful for the v0.5-vs-v0.6 ablation. The flag
+    is recorded in each run's trace.config so downstream comparisons are
+    not confused.
+    """
+    skip_verification = not enable_verification
     selected = _select_scenarios(scenario_ids, max_scenarios)
     results = [
         _run_one_scenario(
@@ -330,6 +371,8 @@ def run_evaluation(
             output_format=output_format,
             output_dir=output_dir,
             threshold_overrides=threshold_overrides,
+            skip_verification=skip_verification,
+            max_revisions=max_revisions,
         )
         for scenario in selected
     ]
@@ -354,6 +397,8 @@ def run_evaluation(
                         output_format=output_format,
                         output_dir=output_dir,
                         threshold_overrides=threshold_overrides,
+                        skip_verification=skip_verification,
+                        max_revisions=max_revisions,
                     )
                 )
                 for _ in range(determinism_repeats)

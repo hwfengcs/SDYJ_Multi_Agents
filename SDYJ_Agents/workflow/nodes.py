@@ -10,6 +10,7 @@ from ..agents.coordinator import Coordinator
 from ..agents.planner import Planner
 from ..agents.researcher import Researcher
 from ..agents.rapporteur import Rapporteur
+from ..agents.verifier import Verifier, append_verification_history
 from ..utils.tracing import record_decision, record_node_event, record_trace_event
 
 
@@ -23,7 +24,8 @@ class WorkflowNodes:
         coordinator: Coordinator,
         planner: Planner,
         researcher: Researcher,
-        rapporteur: Rapporteur
+        rapporteur: Rapporteur,
+        verifier: "Verifier | None" = None,
     ):
         """
         Initialize workflow nodes.
@@ -33,11 +35,16 @@ class WorkflowNodes:
             planner: Planner agent instance
             researcher: Researcher agent instance
             rapporteur: Rapporteur agent instance
+            verifier: Optional Verifier agent. When ``None``, the workflow
+                still has a verifier node but it short-circuits to
+                ``accept`` (used by tests / replay where verification is
+                irrelevant).
         """
         self.coordinator = coordinator
         self.planner = planner
         self.researcher = researcher
         self.rapporteur = rapporteur
+        self.verifier = verifier
 
     def coordinator_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -233,6 +240,7 @@ class WorkflowNodes:
                 "research_batches": len(state.get("research_results") or []),
                 "evidence_count": len(state.get("evidence_items") or []),
                 "output_format": state.get("output_format"),
+                "revision_count": state.get("revision_count", 0),
             },
         )
         try:
@@ -244,8 +252,176 @@ class WorkflowNodes:
                 state.get('trace'),
                 "rapporteur",
                 int(round((time.perf_counter() - started) * 1000)),
-                metadata=state.get("report_metrics") or {},
+                metadata={
+                    **(state.get("report_metrics") or {}),
+                    "revision_count": state.get("revision_count", 0),
+                },
             )
+
+    def verifier_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Verifier node — grade the freshly written report.
+
+        On success, populates ``state['verification_result']`` and appends to
+        ``state['verification_history']``. The downstream conditional edge
+        ``should_revise_or_end`` reads those fields to decide whether to loop
+        back to the rapporteur.
+
+        Skipped when ``state['skip_verification']`` is true or the workflow
+        was constructed without a ``Verifier``; in both cases the node is a
+        no-op so the graph still advances to END.
+
+        IMPORTANT: ``revision_count`` is incremented *here* (not in the
+        conditional edge below). LangGraph persists state mutations made
+        inside node functions but discards mutations made inside conditional
+        edge functions, so doing the bump here is what prevents an infinite
+        critique-revise loop.
+        """
+        started = time.perf_counter()
+        skip = bool(state.get("skip_verification")) or self.verifier is None
+        record_trace_event(
+            state.get('trace'),
+            "node_start",
+            "verifier",
+            node="verifier",
+            input_snapshot={
+                "skip_verification": skip,
+                "revision_count": state.get("revision_count", 0),
+                "max_revisions": state.get("max_revisions", 0),
+            },
+        )
+        try:
+            if skip:
+                state['current_step'] = 'verification_skipped'
+                return state
+
+            state['current_step'] = 'verifying'
+            verification_result = self.verifier.verify(state)
+            state['verification_result'] = verification_result
+            append_verification_history(state, verification_result)
+
+            # Mirror the critique into the trace so it is visible in inspect-run
+            # and survives deterministic replay.
+            record_trace_event(
+                state.get('trace'),
+                event_type="verification",
+                name=f"critique#{state.get('revision_count', 0) + 1}",
+                node="verifier",
+                status="ok" if not verification_result.get("verifier_failed") else "error",
+                output_snapshot={
+                    "scores": verification_result.get("scores"),
+                    "overall_quality": verification_result.get("overall_quality"),
+                    "should_revise": verification_result.get("should_revise"),
+                    "weakest_dimension": verification_result.get("weakest_dimension"),
+                },
+                metadata={
+                    "revision_count": state.get("revision_count", 0),
+                    "summary": verification_result.get("summary"),
+                },
+            )
+
+            # Decide whether the next edge will route to a revise. We bump
+            # revision_count here so the bump is captured in the persisted
+            # state — see the docstring for why the conditional edge cannot
+            # do it itself.
+            should_revise = bool(verification_result.get("should_revise"))
+            current_count = int(state.get("revision_count", 0) or 0)
+            max_revisions = int(state.get("max_revisions", 0) or 0)
+            will_route_to_revise = should_revise and current_count < max_revisions
+            if will_route_to_revise:
+                state["revision_count"] = current_count + 1
+            state["_pending_route_to_revise"] = will_route_to_revise
+
+            # Surface the latest critique into trace metrics so it lands in
+            # downstream summaries (diff-runs, eval reports).
+            trace = state.get("trace")
+            if trace is not None:
+                trace.setdefault("metrics", {}).update(
+                    {
+                        "verifier_overall_quality": verification_result.get("overall_quality"),
+                        "verifier_should_revise": verification_result.get("should_revise"),
+                        "verifier_weakest_dimension": verification_result.get("weakest_dimension"),
+                        "verifier_revision_count": state["revision_count"],
+                    }
+                )
+
+            return state
+        finally:
+            record_node_event(
+                state.get('trace'),
+                "verifier",
+                int(round((time.perf_counter() - started) * 1000)),
+                metadata={
+                    "skipped": skip,
+                    "revision_count": state.get("revision_count", 0),
+                    "should_revise": (state.get("verification_result") or {}).get(
+                        "should_revise"
+                    ),
+                },
+            )
+
+    def should_revise_or_end(self, state: Dict[str, Any]) -> str:
+        """Decide whether to loop back to the rapporteur for one more pass.
+
+        This function only *reads* state — see ``verifier_node`` for why the
+        revision counter is bumped there instead of here.
+
+        Routing rules (in order):
+        1. If verification was skipped or never ran -> end.
+        2. If the verifier said "do not revise" -> end.
+        3. If we have already used up ``max_revisions`` -> end (with a
+           routing-level note in the trace so the operator can see the cap
+           kicked in).
+        4. Otherwise route back to the rapporteur. The verifier hints are
+           already on state for the rapporteur to read.
+        """
+        verification = state.get("verification_result") or {}
+        max_revisions = state.get("max_revisions") or 0
+
+        if state.get("skip_verification") or not verification:
+            record_decision(
+                state.get('trace'),
+                node="verifier",
+                decision="route_end",
+                reason="verification skipped or unavailable",
+            )
+            return "end"
+
+        if not verification.get("should_revise"):
+            record_decision(
+                state.get('trace'),
+                node="verifier",
+                decision="route_end",
+                reason="verifier accepted the report",
+                metadata={"overall_quality": verification.get("overall_quality")},
+            )
+            return "end"
+
+        if not state.get("_pending_route_to_revise"):
+            # The verifier_node already concluded we hit the cap; honor it.
+            record_decision(
+                state.get('trace'),
+                node="verifier",
+                decision="route_end",
+                reason="max_revisions reached, accepting current report",
+                metadata={
+                    "revision_count": state.get("revision_count", 0),
+                    "max_revisions": max_revisions,
+                    "overall_quality": verification.get("overall_quality"),
+                },
+            )
+            return "end"
+
+        record_decision(
+            state.get('trace'),
+            node="verifier",
+            decision="route_rapporteur_revise",
+            reason=f"revision {state.get('revision_count', 0)}/{max_revisions}",
+            metadata={
+                "weakest_dimension": verification.get("weakest_dimension"),
+                "overall_quality": verification.get("overall_quality"),
+            },
+        )
+        return "rapporteur"
 
     def should_continue_to_planner(self, state: Dict[str, Any]) -> str:
         """
@@ -369,7 +545,8 @@ def create_node_functions(
     coordinator: Coordinator,
     planner: Planner,
     researcher: Researcher,
-    rapporteur: Rapporteur
+    rapporteur: Rapporteur,
+    verifier: "Verifier | None" = None,
 ) -> WorkflowNodes:
     """
     Create workflow node functions.
@@ -379,8 +556,10 @@ def create_node_functions(
         planner: Planner agent
         researcher: Researcher agent
         rapporteur: Rapporteur agent
+        verifier: Optional Verifier agent (v0.6+). When ``None`` the verifier
+            node is a no-op and the workflow effectively skips verification.
 
     Returns:
         WorkflowNodes instance
     """
-    return WorkflowNodes(coordinator, planner, researcher, rapporteur)
+    return WorkflowNodes(coordinator, planner, researcher, rapporteur, verifier)
