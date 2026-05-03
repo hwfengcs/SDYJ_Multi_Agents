@@ -18,3 +18,14 @@ def test_docs_trace_viewer_entrypoint_points_to_viewer():
     html = entrypoint.read_text(encoding="utf-8")
 
     assert "../SDYJ_Agents/web/trace_viewer.html" in html
+    assert "SDYJ_Agents/web/trace_viewer.html" in html
+    assert "location.replace(target)" in html
+
+
+def test_pages_workflow_publishes_trace_viewer():
+    workflow = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "pages.yml"
+    content = workflow.read_text(encoding="utf-8")
+
+    assert "actions/deploy-pages" in content
+    assert "SDYJ_Agents/web/trace_viewer.html" in content
+    assert "cp -R docs/." in content

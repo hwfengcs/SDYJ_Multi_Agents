@@ -3,7 +3,6 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="0; url=../SDYJ_Agents/web/trace_viewer.html">
   <title>SDYJ Trace Viewer</title>
   <style>
     body {
@@ -23,6 +22,13 @@
   </style>
 </head>
 <body>
-  <p>Opening <a href="../SDYJ_Agents/web/trace_viewer.html">SDYJ Trace Viewer</a>.</p>
+  <p>Opening <a id="viewerLink" href="../SDYJ_Agents/web/trace_viewer.html">SDYJ Trace Viewer</a>.</p>
+  <script>
+    const target = location.pathname.includes("/docs/")
+      ? "../SDYJ_Agents/web/trace_viewer.html"
+      : "SDYJ_Agents/web/trace_viewer.html";
+    document.getElementById("viewerLink").href = target;
+    location.replace(target);
+  </script>
 </body>
 </html>
