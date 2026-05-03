@@ -21,9 +21,11 @@ Click **Create Space**. Hugging Face creates an empty Git repo.
 
 ## 2. Configure the Space metadata
 
-Spaces reads a YAML frontmatter from the repo's `README.md`. Replace the file
-in your new Space with the snippet below (you can paste this in the web UI
-editor, "Files" tab):
+Spaces reads a YAML frontmatter from the repo's `README.md`. Use
+[`docs/huggingface-space/README.md`](huggingface-space/README.md) as the
+Space README template. You can paste it in the web UI editor, "Files" tab.
+
+The template starts with:
 
 ```yaml
 ---

@@ -1,0 +1,16 @@
+include README.md
+include README_EN.md
+include LICENSE
+include requirements.txt
+include environment.yml
+include .env.example
+include mcp_config.json.example
+include app.py
+include streamlit_app.py
+recursive-include docs *
+recursive-include examples *
+recursive-include SDYJ_Agents/prompts *.md
+recursive-include SDYJ_Agents/web *.html
+recursive-include SDYJ_Agents/benchmarks/fixtures *.jsonl
+global-exclude __pycache__/*
+global-exclude *.py[cod]

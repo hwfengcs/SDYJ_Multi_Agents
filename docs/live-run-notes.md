@@ -91,3 +91,15 @@ External blockers:
 
 - GitHub MCP `--check` reports `GITHUB_PERSONAL_ACCESS_TOKEN=false`; do not run
   `--list-tools` for GitHub until a token is configured.
+
+## 2026-05-03 - Hosted demo / release preparation
+
+- Hugging Face Spaces code-side preparation: root `app.py` exists, `requirements.txt` now includes `streamlit>=1.36.0`, and the Space README template lives at `docs/huggingface-space/README.md`.
+- GitHub Pages code-side preparation: `docs/index.html` links Trace Viewer, benchmark docs, public benchmark status, Spaces deploy docs, and release process docs. The workflow still requires repository Settings -> Pages -> Source: GitHub Actions.
+- Release packaging preparation: `MANIFEST.in` explicitly includes docs, examples, root Streamlit entrypoints, env examples, MCP config examples, prompts, web HTML, and benchmark fixtures.
+
+External blockers:
+
+- HF Space URL is not available until the Space is created and secrets are configured on Hugging Face.
+- GitHub Pages URL is not available until Pages is enabled in repository settings and the workflow is run.
+- TestPyPI/PyPI URLs require Trusted Publisher setup and a publish workflow run.

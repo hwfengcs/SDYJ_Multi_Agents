@@ -29,3 +29,12 @@ def test_pages_workflow_publishes_trace_viewer():
     assert "actions/deploy-pages" in content
     assert "SDYJ_Agents/web/trace_viewer.html" in content
     assert "cp -R docs/." in content
+
+
+def test_docs_index_links_pages_artifacts():
+    index = Path(__file__).resolve().parents[1] / "docs" / "index.html"
+    html = index.read_text(encoding="utf-8")
+
+    assert "trace-viewer-demo.html" in html
+    assert "benchmark-results-public.md" in html
+    assert "huggingface-spaces-deploy.md" in html

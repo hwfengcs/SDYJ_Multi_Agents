@@ -67,7 +67,7 @@ git tag v0.6.0
 git push origin v0.6.0
 gh release create v0.6.0 \
   --title "v0.6.0 — Self-Verifying Deep Research Agent" \
-  --notes-file docs/release-notes/v0.6.0.md
+  --notes-file docs/release-notes/v0.6.md
 ```
 
 ## Local smoke test before tagging
@@ -75,9 +75,20 @@ gh release create v0.6.0 \
 ```bash
 conda env update -n sdyj -f environment.yml --prune
 conda activate sdyj
+pytest
+ruff check SDYJ_Agents tests examples
+sdyj benchmark run --max-scenarios 1 --max-iterations 2 --fail-under 0.75
 python -m build
+python -m twine check dist/*
 python -m pip install --force-reinstall dist/sdyj_multi_agents-*.whl
-sdyj research "smoke test query" --auto-approve --provider deepseek
+sdyj --version
+sdyj doctor --provider deepseek
+```
+
+Run a live research smoke only after provider/search keys are present:
+
+```bash
+sdyj research "smoke test query" --auto-approve --provider deepseek --max-iterations 1
 ```
 
 Local development and CI use Conda. `pyproject.toml` remains the source of
