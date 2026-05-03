@@ -39,6 +39,16 @@ jobs:
         shell: bash -el {0}
         run: conda install -y -c conda-forge python-build twine
 
+      - name: Install project for release smoke tests
+        shell: bash -el {0}
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run release smoke tests
+        shell: bash -el {0}
+        run: |
+          python -m pytest tests/test_version.py tests/test_package_artifacts.py tests/test_external_benchmark.py tests/test_cli.py
+          python -m ruff check SDYJ_Agents tests examples
+
       - name: Build sdist and wheel
         shell: bash -el {0}
         run: python -m build

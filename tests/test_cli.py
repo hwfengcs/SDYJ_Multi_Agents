@@ -123,3 +123,32 @@ def test_doctor_reports_missing_required_api_key(monkeypatch):
     assert llm_check.status == "FAIL"
     assert llm_check.required is True
     assert mcp_check.status == "WARN"
+
+
+def test_benchmark_external_cli_writes_artifacts(tmp_path, monkeypatch):
+    from SDYJ_Agents.cli import main as cli_main
+
+    monkeypatch.setattr(cli_main, "load_dotenv", lambda *a, **kw: None)
+
+    exit_code = cli_main.main(
+        [
+            "benchmark",
+            "external",
+            "--suite",
+            "gaia",
+            "--source",
+            "local",
+            "--limit",
+            "1",
+            "--output-dir",
+            str(tmp_path),
+            "--fail-under",
+            "1.0",
+        ]
+    )
+
+    assert exit_code == 0
+    summaries = list((tmp_path / "external_benchmarks").glob("*/summary.json"))
+    predictions = list((tmp_path / "external_benchmarks").glob("*/predictions.jsonl"))
+    assert len(summaries) == 1
+    assert len(predictions) == 1
