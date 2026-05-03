@@ -1,0 +1,25 @@
+{
+  "run_id": "gaia_20260503_124856",
+  "created_at": "2026-05-03T12:48:56.471154",
+  "suite": "gaia",
+  "source": "local",
+  "split": "validation",
+  "limit": 3,
+  "hf_dataset": null,
+  "hf_config": null,
+  "data_path": null,
+  "predictions_input": null,
+  "prediction_source": "example_metadata_baseline",
+  "example_count": 3,
+  "correct": 3,
+  "accuracy": 1.0,
+  "fail_under": 1.0,
+  "passed": true,
+  "artifacts": {
+    "run_dir": "outputs\\public_benchmarks\\external_benchmarks\\gaia_20260503_124856",
+    "manifest": "outputs\\public_benchmarks\\external_benchmarks\\gaia_20260503_124856\\manifest.jsonl",
+    "predictions": "outputs\\public_benchmarks\\external_benchmarks\\gaia_20260503_124856\\predictions.jsonl",
+    "graded": "outputs\\public_benchmarks\\external_benchmarks\\gaia_20260503_124856\\graded.jsonl",
+    "summary": "outputs\\public_benchmarks\\external_benchmarks\\gaia_20260503_124856\\summary.json"
+  }
+}

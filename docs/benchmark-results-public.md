@@ -12,7 +12,11 @@ local smoke tests.
 | GAIA Level 1 | Hugging Face `gaia-benchmark/GAIA` | 5 | blocked until HF login / dataset access is confirmed | not claimed |
 | AssistantBench | public slice TBD | TBD | not started | not claimed |
 
-Latest local smoke artifact: `outputs/public_benchmarks/external_benchmarks/gaia_20260503_113601/summary.json`.
+Latest local smoke run: `gaia_20260503_124856`.
+
+Committed smoke summary: [`docs/public-benchmark-artifacts/gaia-smoke-summary.json`](public-benchmark-artifacts/gaia-smoke-summary.json).
+
+Local full artifact path: `outputs/public_benchmarks/external_benchmarks/gaia_20260503_124856/summary.json`.
 
 ## Reproducible Smoke Command
 
@@ -31,7 +35,18 @@ outputs/public_benchmarks/external_benchmarks/<run-id>/
 ```
 
 The bundled fixture is synthetic and exists only to verify the benchmark
-harness. It should never be presented as a GAIA score.
+harness. Its predictions come from each fixture row's `baseline_prediction`
+field (`prediction_source=example_metadata_baseline`), so it should never be
+presented as a GAIA score.
+
+Latest local gate check:
+
+```bash
+sdyj benchmark run --max-scenarios 1 --max-iterations 2 --fail-under 0.75 --output-dir outputs/verify_benchmark_gate
+```
+
+Result: average score `1.0000`, passed. Summary:
+`outputs/verify_benchmark_gate/eval_reports/eval_summary_20260503_124856.json`.
 
 ## Real GAIA Slice
 

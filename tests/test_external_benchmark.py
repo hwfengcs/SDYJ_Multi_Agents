@@ -24,6 +24,7 @@ def test_external_benchmark_writes_artifacts(tmp_path):
     assert summary["passed"] is True
     assert summary["example_count"] == 2
     assert summary["accuracy"] == 1.0
+    assert summary["prediction_source"] == "example_metadata_baseline"
     summary_path = tmp_path / "external_benchmarks" / summary["run_id"] / "summary.json"
     manifest_path = tmp_path / "external_benchmarks" / summary["run_id"] / "manifest.jsonl"
     assert summary_path.exists()
@@ -49,6 +50,7 @@ def test_external_benchmark_accepts_prediction_file(tmp_path):
 
     assert summary["correct"] == 1
     assert summary["accuracy"] == 0.5
+    assert summary["prediction_source"] == "predictions_file"
 
 
 def test_grader_normalizes_answer_variants():

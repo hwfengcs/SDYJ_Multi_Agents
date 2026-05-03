@@ -107,6 +107,7 @@ def run_external_benchmark(
         hf_dataset=hf_dataset,
         hf_config=hf_config,
     )
+    prediction_source = "predictions_file" if predictions_path else "example_metadata_baseline"
     predictions = _load_predictions(predictions_path) if predictions_path else _baseline_predictions(examples)
     graded = grade_predictions(examples, predictions)
     passed = True
@@ -136,6 +137,7 @@ def run_external_benchmark(
         "hf_config": hf_config if source == "hf" else None,
         "data_path": str(data_path) if data_path else None,
         "predictions_input": str(predictions_path) if predictions_path else None,
+        "prediction_source": prediction_source,
         "example_count": graded["total"],
         "correct": graded["correct"],
         "accuracy": graded["accuracy"],
