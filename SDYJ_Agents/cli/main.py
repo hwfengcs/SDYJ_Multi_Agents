@@ -28,7 +28,12 @@ from .. import __version__
 from ..benchmarks import run_external_benchmark
 from ..evaluation import run_evaluation
 from ..evaluation.scenarios import list_scenarios
-from ..utils.config import load_config_from_env, _parse_env_args, _parse_env_json_object
+from ..utils.config import (
+    load_config_from_env,
+    _parse_env_args,
+    _parse_env_json_any_object,
+    _parse_env_json_object,
+)
 from ..utils.logger import setup_logger
 from ..utils.tracing import (
     InstrumentedLLM,
@@ -237,6 +242,8 @@ def collect_doctor_checks(provider: str | None = None) -> list[DoctorCheck]:
                 command=os.getenv("MCP_COMMAND"),
                 args=_parse_env_args(os.getenv("MCP_ARGS")),
                 env=_parse_env_json_object(os.getenv("MCP_ENV_JSON")),
+                query_argument=os.getenv("MCP_QUERY_ARG", "query"),
+                tool_arguments=_parse_env_json_any_object(os.getenv("MCP_TOOL_ARGS_JSON")),
             )
             checks.append(
                 DoctorCheck(
@@ -599,6 +606,8 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
             mcp_command=env_cfg.search.mcp_command,
             mcp_args=env_cfg.search.mcp_args,
             mcp_env=env_cfg.search.mcp_env,
+            mcp_query_arg=env_cfg.search.mcp_query_arg,
+            mcp_tool_args=env_cfg.search.mcp_tool_args,
             enable_reflection=not config.skip_reflection,
             enable_parallel_tool_execution=not config.skip_parallel_tool_execution,
         )

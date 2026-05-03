@@ -286,6 +286,8 @@ def _run_one_scenario(
             mcp_command=env_cfg.search.mcp_command,
             mcp_args=env_cfg.search.mcp_args,
             mcp_env=env_cfg.search.mcp_env,
+            mcp_query_arg=env_cfg.search.mcp_query_arg,
+            mcp_tool_args=env_cfg.search.mcp_tool_args,
             enable_reflection=enable_reflection,
             enable_parallel_tool_execution=enable_parallel_tool_execution,
         )

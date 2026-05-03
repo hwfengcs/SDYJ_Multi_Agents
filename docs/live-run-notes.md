@@ -52,3 +52,42 @@ Fixes discovered during this run:
 
 - Windows GBK console rendering could fail after report generation and before trace saving; fixed by saving artifacts before terminal rendering and by configuring console streams to replace unencodable characters.
 - Deterministic replay did not preserve missing-source tool failures, which could trigger an extra reflection call and exhaust recorded LLM responses; fixed by replaying missing-source calls as `None` so Researcher records the same unavailable-source outcome.
+
+## 2026-05-03 - MCP filesystem demo smoke
+
+- Status: pass for local filesystem MCP; GitHub MCP blocked by missing `GITHUB_PERSONAL_ACCESS_TOKEN`.
+- Dry-run command:
+
+```bash
+python examples/mcp_demos/mcp_filesystem_demo.py --root .
+```
+
+- Dependency check:
+
+```bash
+python examples/mcp_demos/mcp_filesystem_demo.py --root . --check
+```
+
+Observed `npx=true` and `mcp_python_sdk=true`.
+
+- Real list-tools command:
+
+```bash
+python examples/mcp_demos/mcp_filesystem_demo.py --root . --list-tools
+```
+
+The server exposed `search_files`, `read_text_file`, `list_directory`,
+`directory_tree`, and related filesystem tools. The demo now defaults to:
+
+```bash
+MCP_TOOL_NAME=search_files
+MCP_TOOL_ARGS_JSON={"path":"<repo-root>","pattern":"{query}"}
+```
+
+Direct `MCPClient.search("README.md")` through `search_files` returned one
+normalized result for `README.md`.
+
+External blockers:
+
+- GitHub MCP `--check` reports `GITHUB_PERSONAL_ACCESS_TOKEN=false`; do not run
+  `--list-tools` for GitHub until a token is configured.

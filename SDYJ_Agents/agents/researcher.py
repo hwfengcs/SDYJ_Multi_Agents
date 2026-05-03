@@ -75,6 +75,8 @@ class Researcher:
         mcp_command: Optional[str] = None,
         mcp_args: Optional[List[str]] = None,
         mcp_env: Optional[Dict[str, str]] = None,
+        mcp_query_arg: str = "query",
+        mcp_tool_args: Optional[Dict[str, Any]] = None,
         enable_reflection: bool = True,
         enable_parallel_tool_execution: bool = True,
         parallel_concurrency_limit: int = 4,
@@ -120,6 +122,8 @@ class Researcher:
                 command=mcp_command,
                 args=mcp_args,
                 env=mcp_env,
+                query_argument=mcp_query_arg,
+                tool_arguments=mcp_tool_args,
             )
             if has_mcp_config
             else None

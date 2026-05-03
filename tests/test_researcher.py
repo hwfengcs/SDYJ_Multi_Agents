@@ -59,6 +59,43 @@ def test_researcher_initializes_mcp_from_stdio_config():
     assert researcher.mcp.default_tool_name == "search_docs"
 
 
+def test_execute_task_collects_mcp_source_and_trace():
+    class FakeMCP:
+        def search(self, query):
+            return {
+                "query": query,
+                "source": "mcp",
+                "tool": "search_docs",
+                "results": [
+                    {
+                        "title": "MCP docs",
+                        "url": "file:///docs/mcp.md",
+                        "snippet": "MCP trace details",
+                        "relevance_score": 0.9,
+                    }
+                ],
+                "timestamp": "2026-01-01T00:00:00",
+            }
+
+    researcher = Researcher(FakeLLM(), enable_reflection=False)
+    researcher.mcp = FakeMCP()
+    task = {
+        "task_id": 2,
+        "description": "Search MCP docs",
+        "search_queries": ["trace"],
+        "sources": ["mcp"],
+        "status": "pending",
+    }
+    state = _parallel_state(task)
+
+    updated = researcher.execute_task(state, task)
+
+    assert updated["research_results"][0]["source"] == "mcp"
+    assert updated["evidence_items"][0]["source"] == "mcp"
+    assert updated["trace"]["tool_calls"][0]["source"] == "mcp"
+    assert updated["trace"]["tool_calls"][0]["result_count"] == 1
+
+
 class _Probe:
     def __init__(self):
         self.active = 0

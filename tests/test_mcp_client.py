@@ -107,6 +107,33 @@ def test_search_uses_sdk_call_tool_and_wraps_result(monkeypatch):
     assert result["results"][0]["title"] == "Trace docs"
 
 
+def test_search_uses_tool_argument_template(monkeypatch):
+    client = MCPClient(
+        command="python",
+        args=["server.py"],
+        default_tool_name="search_files",
+        tool_arguments={"path": ".", "pattern": "{query}", "limit": 5},
+    )
+
+    async def fake_run_sdk_operation(operation):
+        class Session:
+            async def call_tool(self, tool_name, arguments):
+                assert tool_name == "search_files"
+                assert arguments == {"path": ".", "pattern": "trace", "limit": 5}
+                return {"results": []}
+
+        result = operation(Session())
+        if hasattr(result, "__await__"):
+            return await result
+        return result
+
+    monkeypatch.setattr(client, "_run_sdk_operation", fake_run_sdk_operation)
+
+    result = asyncio.run(client.search("trace"))
+
+    assert result["tool"] == "search_files"
+
+
 def test_list_tools_normalizes_sdk_tool_objects(monkeypatch):
     client = MCPClient(command="python", args=["server.py"])
 
@@ -139,3 +166,15 @@ def test_list_tools_normalizes_sdk_tool_objects(monkeypatch):
             "input_schema": {"type": "object"},
         }
     ]
+
+
+def test_list_tools_records_last_error(monkeypatch):
+    client = MCPClient(command="python", args=["server.py"])
+
+    async def fake_run_sdk_operation(operation):
+        raise RuntimeError("server unavailable")
+
+    monkeypatch.setattr(client, "_run_sdk_operation", fake_run_sdk_operation)
+
+    assert asyncio.run(client.list_tools()) == []
+    assert client.last_error == "server unavailable"

@@ -34,6 +34,9 @@ class MCPClient:
         command: Direct stdio command when no config file is used.
         args: Direct stdio command args.
         env: Direct stdio environment overrides.
+        query_argument: Argument name used when no explicit tool_arguments are configured.
+        tool_arguments: Optional argument template for :meth:`search`; string values
+            can contain ``{query}``.
     """
 
     def __init__(
@@ -47,6 +50,8 @@ class MCPClient:
         command: Optional[str] = None,
         args: Optional[List[str]] = None,
         env: Optional[Dict[str, str]] = None,
+        query_argument: str = "query",
+        tool_arguments: Optional[Dict[str, Any]] = None,
     ):
         self.server_url = server_url.rstrip("/") if server_url else None
         self.api_key = api_key
@@ -57,6 +62,9 @@ class MCPClient:
         self.command = command
         self.args = list(args or [])
         self.env = dict(env or {})
+        self.query_argument = query_argument or "query"
+        self.tool_arguments = dict(tool_arguments or {})
+        self.last_error: Optional[str] = None
         self._configured_transport: Optional[str] = None
 
         if config_path:
@@ -110,7 +118,7 @@ class MCPClient:
     ) -> Dict[str, Any]:
         """Perform a search-like MCP tool call and normalize the result."""
         selected_tool = tool_name or self.default_tool_name
-        parameters = {"query": query, **kwargs}
+        parameters = self._build_tool_parameters(query, kwargs)
         try:
             payload = await self.execute_tool(selected_tool, parameters)
             if payload.get("error"):
@@ -136,6 +144,26 @@ class MCPClient:
                 "error": str(exc),
             }
 
+    def _build_tool_parameters(self, query: str, overrides: Dict[str, Any]) -> Dict[str, Any]:
+        if self.tool_arguments:
+            parameters = self._render_argument_template(self.tool_arguments, query)
+            parameters.update(overrides)
+            return parameters
+        return {self.query_argument: query, **overrides}
+
+    @classmethod
+    def _render_argument_template(cls, value: Any, query: str) -> Any:
+        if isinstance(value, str):
+            return value.replace("{query}", query)
+        if isinstance(value, list):
+            return [cls._render_argument_template(item, query) for item in value]
+        if isinstance(value, dict):
+            return {
+                str(key): cls._render_argument_template(item, query)
+                for key, item in value.items()
+            }
+        return value
+
     async def list_tools(self) -> List[Dict[str, Any]]:
         """List tools exposed by the configured MCP server."""
         if self.transport == "legacy_http":
@@ -144,8 +172,10 @@ class MCPClient:
         try:
             response = await self._run_sdk_operation(lambda session: session.list_tools())
             tools = getattr(response, "tools", response)
+            self.last_error = None
             return [self._tool_to_dict(tool) for tool in tools or []]
-        except Exception:
+        except Exception as exc:
+            self.last_error = str(exc)
             return []
 
     async def list_resources(self) -> List[Dict[str, Any]]:
@@ -156,8 +186,10 @@ class MCPClient:
         try:
             response = await self._run_sdk_operation(lambda session: session.list_resources())
             resources = getattr(response, "resources", response)
+            self.last_error = None
             return [self._resource_to_dict(resource) for resource in resources or []]
-        except Exception:
+        except Exception as exc:
+            self.last_error = str(exc)
             return []
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -173,19 +205,24 @@ class MCPClient:
             response = await self._run_sdk_operation(
                 lambda session: session.call_tool(tool_name, arguments=parameters)
             )
+            self.last_error = None
             return self._sdk_result_to_dict(response)
         except Exception as exc:
+            self.last_error = str(exc)
             return {"error": str(exc), "tool": tool_name}
 
     async def _legacy_list_tools(self) -> List[Dict[str, Any]]:
         if not self.server_url:
+            self.last_error = "MCP server URL is not configured"
             return []
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(f"{self.server_url}/tools", headers=self.headers)
                 response.raise_for_status()
+                self.last_error = None
                 return response.json().get("tools", [])
-        except Exception:
+        except Exception as exc:
+            self.last_error = str(exc)
             return []
 
     async def _legacy_execute_tool(self, tool_name: str, parameters: Dict[str, Any]) -> Dict[str, Any]:

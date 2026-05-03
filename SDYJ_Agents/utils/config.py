@@ -33,6 +33,8 @@ class SearchConfig(BaseModel):
     mcp_command: Optional[str] = Field(default=None, description="MCP stdio command")
     mcp_args: list[str] = Field(default_factory=list, description="MCP stdio command args")
     mcp_env: Dict[str, str] = Field(default_factory=dict, description="MCP stdio environment overrides")
+    mcp_query_arg: str = Field(default="query", description="MCP search query argument name")
+    mcp_tool_args: Dict[str, Any] = Field(default_factory=dict, description="MCP tool argument template")
 
 
 class WorkflowConfig(BaseModel):
@@ -82,6 +84,19 @@ def _parse_env_json_object(value: Optional[str]) -> Dict[str, str]:
     if not isinstance(parsed, dict):
         return {}
     return {str(key): str(item) for key, item in parsed.items()}
+
+
+def _parse_env_json_any_object(value: Optional[str]) -> Dict[str, Any]:
+    """Parse a JSON object while preserving value types."""
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(key): item for key, item in parsed.items()}
 
 
 def load_config_from_env() -> Config:
@@ -137,6 +152,8 @@ def load_config_from_env() -> Config:
         mcp_command=os.getenv("MCP_COMMAND"),
         mcp_args=_parse_env_args(os.getenv("MCP_ARGS")),
         mcp_env=_parse_env_json_object(os.getenv("MCP_ENV_JSON")),
+        mcp_query_arg=os.getenv("MCP_QUERY_ARG", "query"),
+        mcp_tool_args=_parse_env_json_any_object(os.getenv("MCP_TOOL_ARGS_JSON")),
     )
 
     # Create workflow config
@@ -215,6 +232,8 @@ def get_default_config() -> Dict[str, Any]:
             "mcp_command": None,
             "mcp_args": [],
             "mcp_env": {},
+            "mcp_query_arg": "query",
+            "mcp_tool_args": {},
         },
         "workflow": {
             "max_iterations": 5,
