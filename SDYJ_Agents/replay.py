@@ -59,12 +59,14 @@ class ReplaySearchTool:
         self._consumed: set[int] = set()
         self._lock = threading.Lock()
 
-    def search(self, query: str, **kwargs) -> Dict[str, Any]:
+    def search(self, query: str, **kwargs) -> Dict[str, Any] | None:
         with self._lock:
             call = self._take_recorded_call(query, require_query=True)
             if call is None:
                 call = self._take_recorded_call(query, require_query=False)
             if call is not None:
+                if "result" in call and call.get("result") is None:
+                    return None
                 result = copy.deepcopy(call.get("result") or {})
                 if not result:
                     result = {
@@ -100,9 +102,52 @@ def can_deterministically_replay(trace: Dict[str, Any]) -> tuple[bool, str]:
     cache = trace.get("replay_cache") or {}
     if not cache.get("llm_calls"):
         return False, "trace does not contain recorded LLM responses"
-    if trace.get("tool_calls") and not cache.get("tool_calls"):
-        return False, "trace does not contain recorded tool results"
+    for call in trace.get("tool_calls") or []:
+        if call.get("error"):
+            continue
+        if not _has_cached_tool_result(call, cache.get("tool_calls") or []):
+            return False, "trace does not contain recorded successful tool results"
     return True, "ok"
+
+
+def _has_cached_tool_result(call: Dict[str, Any], cached_calls: list[Dict[str, Any]]) -> bool:
+    call_id = call.get("tool_call_id")
+    source = str(call.get("source", "")).lower()
+    query = str(call.get("query", "")).strip().lower()
+    task_id = call.get("task_id")
+    for cached in cached_calls:
+        if call_id and cached.get("tool_call_id") == call_id:
+            return True
+        if (
+            str(cached.get("source", "")).lower() == source
+            and str(cached.get("query", "")).strip().lower() == query
+            and cached.get("task_id") == task_id
+        ):
+            return True
+    return False
+
+
+def _recorded_tool_calls_for_replay(source_trace: Dict[str, Any]) -> list[Dict[str, Any]]:
+    cache = source_trace.get("replay_cache") or {}
+    recorded = copy.deepcopy(cache.get("tool_calls") or [])
+    recorded_ids = {call.get("tool_call_id") for call in recorded if call.get("tool_call_id")}
+
+    for call in source_trace.get("tool_calls") or []:
+        if call.get("tool_call_id") in recorded_ids or not call.get("error"):
+            continue
+        recorded.append(
+            {
+                "tool_call_id": call.get("tool_call_id"),
+                "source": call.get("source"),
+                "query": call.get("query"),
+                "task_id": call.get("task_id"),
+                # Missing-source calls were recorded without a raw result in
+                # the original run, so replay should also return None and let
+                # Researcher record the same unavailable-source outcome.
+                "result": None,
+            }
+        )
+    return recorded
 
 
 def run_deterministic_replay(
@@ -163,7 +208,7 @@ def run_deterministic_replay(
         enable_reflection=enable_reflection_replay,
         enable_parallel_tool_execution=enable_parallel_tool_execution_replay,
     )
-    tool_calls = cache.get("tool_calls", [])
+    tool_calls = _recorded_tool_calls_for_replay(source_trace)
     researcher.tavily = ReplaySearchTool("tavily", tool_calls)
     researcher.arxiv = ReplaySearchTool("arxiv", tool_calls)
     researcher.mcp = ReplaySearchTool("mcp", tool_calls)

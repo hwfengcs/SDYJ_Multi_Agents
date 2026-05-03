@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from SDYJ_Agents import replay as replay_module
+from SDYJ_Agents.replay import _recorded_tool_calls_for_replay
 
 
 class CapturingPlanner:
@@ -101,3 +102,40 @@ def test_replay_restores_parallel_tool_execution_flag_from_source_trace(monkeypa
 
     assert CapturingResearcher.instances[-1].enable_parallel_tool_execution is True
     assert result["trace"]["config"]["enable_parallel_tool_execution"] is True
+
+
+def test_replay_synthesizes_recorded_tool_errors():
+    source_trace = _source_trace()
+    source_trace["tool_calls"] = [
+        {
+            "tool_call_id": "T1",
+            "source": "tavily",
+            "query": "missing key query",
+            "task_id": 1,
+            "result_count": 0,
+            "error": "source unavailable or unsupported",
+        },
+        {
+            "tool_call_id": "T2",
+            "source": "arxiv",
+            "query": "cached query",
+            "task_id": 1,
+            "result_count": 1,
+            "error": None,
+        },
+    ]
+    source_trace["replay_cache"]["tool_calls"] = [
+        {
+            "tool_call_id": "T2",
+            "source": "arxiv",
+            "query": "cached query",
+            "task_id": 1,
+            "result": {"query": "cached query", "source": "arxiv", "results": [{"title": "ok"}]},
+        }
+    ]
+
+    recorded = _recorded_tool_calls_for_replay(source_trace)
+
+    tavily = next(call for call in recorded if call["tool_call_id"] == "T1")
+    assert tavily["result"] is None
+    assert len(recorded) == 2
