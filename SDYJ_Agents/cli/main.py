@@ -8,8 +8,10 @@ Refactored to follow the example.py structure with argparse and config persisten
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
+import platform
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,7 +27,7 @@ from rich.table import Table
 from .. import __version__
 from ..evaluation import run_evaluation
 from ..evaluation.scenarios import list_scenarios
-from ..utils.config import load_config_from_env
+from ..utils.config import load_config_from_env, _parse_env_args, _parse_env_json_object
 from ..utils.logger import setup_logger
 from ..utils.tracing import (
     InstrumentedLLM,
@@ -39,6 +41,7 @@ from ..utils.tracing import (
 )
 from ..replay import can_deterministically_replay, run_deterministic_replay
 from ..llm.factory import LLMFactory
+from ..tools.mcp_client import MCPClient
 from ..agents.coordinator import Coordinator
 from ..agents.planner import Planner
 from ..agents.researcher import Researcher
@@ -65,6 +68,16 @@ class CLIConfig:
     skip_reflection: bool = False
     skip_plan_refinement: bool = False
     skip_parallel_tool_execution: bool = False
+
+
+@dataclass
+class DoctorCheck:
+    """One environment/deployment preflight check."""
+
+    name: str
+    status: str
+    required: bool
+    detail: str
 
 
 # 配置文件路径
@@ -129,6 +142,140 @@ def get_api_key_for_provider(provider: str) -> str | None:
         if api_key:
             return api_key
     return None
+
+
+def _is_importable(module_name: str) -> bool:
+    return importlib.util.find_spec(module_name) is not None
+
+
+def collect_doctor_checks(provider: str | None = None) -> list[DoctorCheck]:
+    """Collect no-network environment checks for local/live deployment."""
+    load_dotenv()
+    selected_provider = (provider or os.getenv("LLM_PROVIDER", "deepseek")).lower()
+    checks: list[DoctorCheck] = []
+
+    python_ok = sys.version_info >= (3, 10)
+    checks.append(
+        DoctorCheck(
+            "Python",
+            "OK" if python_ok else "FAIL",
+            True,
+            f"{platform.python_version()} ({sys.executable})",
+        )
+    )
+
+    key = get_api_key_for_provider(selected_provider)
+    env_names = ", ".join(PROVIDER_API_KEY_ENVS.get(selected_provider, ()))
+    checks.append(
+        DoctorCheck(
+            "LLM API key",
+            "OK" if key else "FAIL",
+            True,
+            f"{selected_provider}: {env_names or 'unknown provider'}",
+        )
+    )
+
+    tavily_key = os.getenv("TAVILY_API_KEY")
+    checks.append(
+        DoctorCheck(
+            "Tavily search",
+            "OK" if tavily_key else "WARN",
+            False,
+            "TAVILY_API_KEY set" if tavily_key else "missing TAVILY_API_KEY; web search will be skipped",
+        )
+    )
+
+    optional_modules = {
+        "streamlit": "Web UI",
+        "mcp": "MCP SDK",
+        "datasets": "External benchmarks",
+    }
+    for module_name, label in optional_modules.items():
+        checks.append(
+            DoctorCheck(
+                label,
+                "OK" if _is_importable(module_name) else "WARN",
+                False,
+                f"module {module_name} {'available' if _is_importable(module_name) else 'not installed'}",
+            )
+        )
+
+    mcp_config_present = any(
+        os.getenv(name)
+        for name in (
+            "MCP_SERVER_URL",
+            "MCP_CONFIG_PATH",
+            "MCP_COMMAND",
+            "MCP_TRANSPORT",
+        )
+    )
+    if mcp_config_present:
+        try:
+            client = MCPClient(
+                server_url=os.getenv("MCP_SERVER_URL"),
+                api_key=os.getenv("MCP_API_KEY"),
+                transport=os.getenv("MCP_TRANSPORT"),
+                default_tool_name=os.getenv("MCP_TOOL_NAME", "web_search"),
+                config_path=os.getenv("MCP_CONFIG_PATH"),
+                server_name=os.getenv("MCP_SERVER_NAME"),
+                command=os.getenv("MCP_COMMAND"),
+                args=_parse_env_args(os.getenv("MCP_ARGS")),
+                env=_parse_env_json_object(os.getenv("MCP_ENV_JSON")),
+            )
+            checks.append(
+                DoctorCheck(
+                    "MCP config",
+                    "OK",
+                    False,
+                    f"transport={client.transport}, tool={client.default_tool_name}",
+                )
+            )
+        except Exception as exc:
+            checks.append(
+                DoctorCheck(
+                    "MCP config",
+                    "FAIL",
+                    False,
+                    str(exc),
+                )
+            )
+    else:
+        checks.append(
+            DoctorCheck(
+                "MCP config",
+                "WARN",
+                False,
+                "not configured; MCP source will be unavailable",
+            )
+        )
+
+    return checks
+
+
+def run_doctor(provider: str | None = None, strict: bool = False) -> int:
+    """Print environment preflight checks and return an exit code."""
+    checks = collect_doctor_checks(provider=provider)
+    table = Table(title="SDYJ Doctor")
+    table.add_column("Check")
+    table.add_column("Status")
+    table.add_column("Required")
+    table.add_column("Detail")
+    for check in checks:
+        style = "green" if check.status == "OK" else "red" if check.status == "FAIL" else "yellow"
+        table.add_row(
+            check.name,
+            f"[{style}]{check.status}[/{style}]",
+            "yes" if check.required else "no",
+            check.detail,
+        )
+    console.print(table)
+
+    has_required_failure = any(check.required and check.status == "FAIL" for check in checks)
+    has_warning_or_failure = any(check.status != "OK" for check in checks)
+    if has_required_failure or (strict and has_warning_or_failure):
+        return 1
+    return 0
+
 
 
 def print_separator(char: str = "─", length: int = 70) -> None:
@@ -1124,6 +1271,7 @@ def parse_args(argv: Any) -> argparse.Namespace:
             "  sdyj list-models deepseek\n"
             "  sdyj eval --max-scenarios 1\n"
             "  sdyj inspect-run\n"
+            "  sdyj doctor\n"
             "  sdyj config-info"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1350,6 +1498,23 @@ def parse_args(argv: Any) -> argparse.Namespace:
         args.interactive = False
         return args
 
+    if argv and argv[0] == "doctor":
+        parser = argparse.ArgumentParser(description="检查本地/部署环境，不调用真实 LLM 或搜索 API")
+        parser.add_argument(
+            "--provider",
+            default=saved_config.get("provider") or os.getenv("LLM_PROVIDER", "deepseek"),
+            choices=["deepseek", "openai", "claude", "gemini"],
+            help="检查哪个 LLM provider 的 API key",
+        )
+        parser.add_argument(
+            "--strict",
+            action="store_true",
+            help="将可选依赖或 MCP/Tavily 警告也视为失败",
+        )
+        args = parser.parse_args(argv[1:])
+        args.command = "doctor"
+        return args
+
     if argv and argv[0] == "research":
         argv = argv[1:]
 
@@ -1414,6 +1579,9 @@ def main(argv: Any = None) -> int:
             error_console.print(f"请在 .env 文件中设置 {expected_envs}")
             return 2
         return execute_evaluation(args)
+
+    if args.command == "doctor":
+        return run_doctor(provider=args.provider, strict=args.strict)
 
     config = _create_config_from_args(args)
 

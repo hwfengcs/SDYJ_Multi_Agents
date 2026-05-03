@@ -33,7 +33,7 @@ colorFrom: blue
 colorTo: indigo
 sdk: streamlit
 sdk_version: "1.36.0"
-app_file: streamlit_app.py
+app_file: app.py
 pinned: false
 license: mit
 short_description: Self-verifying, replayable multi-agent research framework.
@@ -47,7 +47,7 @@ Source code: https://github.com/hwfengcs/SDYJ_Multi_Agents
 Release notes: https://github.com/hwfengcs/SDYJ_Multi_Agents/blob/main/docs/release-notes/v0.6.md
 ```
 
-Save. The frontmatter is what tells HF to use Streamlit + `streamlit_app.py`
+Save. The frontmatter is what tells HF to use Streamlit + `app.py`
 as the entrypoint.
 
 ## 3. Push the code
@@ -119,6 +119,12 @@ conda env update -n sdyj -f environment.yml --prune
 conda activate sdyj
 streamlit run streamlit_app.py
 # Open http://localhost:8501 — same UI that runs on Spaces.
+```
+
+Run the no-network deployment preflight too:
+
+```bash
+sdyj doctor --provider deepseek
 ```
 
 Local development uses the Conda environment in `environment.yml`. Hugging Face

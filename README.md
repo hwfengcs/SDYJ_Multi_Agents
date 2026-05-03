@@ -111,6 +111,7 @@ sdyj inspect-run <run-id> --timeline   # 完整事件时间线
 sdyj runs list
 sdyj replay <run-id>                   # 用录制的 LLM/tool I/O 重放，不调用真实 API
 sdyj diff-runs <run-a> <run-b>
+sdyj doctor                            # 本地/部署环境预检，不调用真实 API
 ```
 
 也可以在浏览器打开 `SDYJ_Agents/web/trace_viewer.html`，拖入

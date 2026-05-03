@@ -111,6 +111,7 @@ sdyj inspect-run <run-id> --timeline   # full event timeline
 sdyj runs list
 sdyj replay <run-id>                   # rebuild from recorded LLM/tool I/O, no real calls
 sdyj diff-runs <run-a> <run-b>
+sdyj doctor                            # local/deployment preflight, no API calls
 ```
 
 Open `SDYJ_Agents/web/trace_viewer.html` in a browser to inspect `trace.json`

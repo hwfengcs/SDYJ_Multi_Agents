@@ -3,6 +3,7 @@ import pytest
 from SDYJ_Agents import __version__
 from SDYJ_Agents.cli.main import (
     _create_config_from_args,
+    collect_doctor_checks,
     get_api_key_for_provider,
     parse_args,
 )
@@ -41,6 +42,7 @@ def test_parse_utility_commands_without_api_key():
     replay_args = parse_args(["replay", "abc123"])
     diff_args = parse_args(["diff-runs", "run-a", "run-b", "--json"])
     runs_args = parse_args(["runs", "list", "--limit", "5"])
+    doctor_args = parse_args(["doctor", "--provider", "deepseek", "--strict"])
 
     assert models.command == "list-models"
     assert models.provider == "deepseek"
@@ -62,6 +64,9 @@ def test_parse_utility_commands_without_api_key():
     assert runs_args.command == "runs"
     assert runs_args.runs_command == "list"
     assert runs_args.limit == 5
+    assert doctor_args.command == "doctor"
+    assert doctor_args.provider == "deepseek"
+    assert doctor_args.strict is True
 
 
 def test_get_api_key_accepts_provider_aliases(monkeypatch):
@@ -77,3 +82,24 @@ def test_version_flag_matches_package_version(capsys):
 
     assert exc_info.value.code == 0
     assert __version__ in capsys.readouterr().out
+
+
+def test_doctor_reports_missing_required_api_key(monkeypatch):
+    monkeypatch.setattr("SDYJ_Agents.cli.main.load_dotenv", lambda *a, **kw: None)
+    for var in (
+        "DEEPSEEK_API_KEY",
+        "TAVILY_API_KEY",
+        "MCP_SERVER_URL",
+        "MCP_CONFIG_PATH",
+        "MCP_COMMAND",
+        "MCP_TRANSPORT",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    checks = collect_doctor_checks(provider="deepseek")
+
+    llm_check = next(check for check in checks if check.name == "LLM API key")
+    mcp_check = next(check for check in checks if check.name == "MCP config")
+    assert llm_check.status == "FAIL"
+    assert llm_check.required is True
+    assert mcp_check.status == "WARN"
