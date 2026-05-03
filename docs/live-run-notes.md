@@ -103,3 +103,28 @@ External blockers:
 - HF Space URL is not available until the Space is created and secrets are configured on Hugging Face.
 - GitHub Pages URL is not available until Pages is enabled in repository settings and the workflow is run.
 - TestPyPI/PyPI URLs require Trusted Publisher setup and a publish workflow run.
+
+## 2026-05-03 - Follow-up preflight
+
+- Status: local verification pass; full Tavily live-search smoke remains blocked.
+- Provider/model target: `deepseek` / `deepseek-v4-flash`.
+
+Validation:
+
+```bash
+sdyj doctor --provider deepseek
+python -m pytest
+python -m ruff check SDYJ_Agents tests examples
+```
+
+Observed results:
+
+- `sdyj doctor --provider deepseek` reports a usable DeepSeek key.
+- `sdyj doctor --provider deepseek` reports `TAVILY_API_KEY` as missing for live web search.
+- Local `.env` check found `TAVILY_API_KEY` empty or placeholder; no secret value was printed or recorded.
+- `python -m pytest`: `109 passed, 1 xfailed`.
+- `python -m ruff check SDYJ_Agents tests examples`: all checks passed.
+
+External blocker:
+
+- Full DeepSeek + Tavily + arXiv live research is still blocked until a real `TAVILY_API_KEY` is configured. Continue with local HF Spaces, Pages, packaging, and benchmark preparation.
