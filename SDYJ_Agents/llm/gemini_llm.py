@@ -2,10 +2,10 @@
 Gemini LLM Implementation
 """
 
-from typing import Iterator
+from typing import Any, Dict, Iterator, Mapping
 from google import genai
 from google.genai import types
-from .base import BaseLLM
+from .base import BaseLLM, parse_json_object
 
 
 class GeminiLLM(BaseLLM):
@@ -76,6 +76,38 @@ class GeminiLLM(BaseLLM):
         else:
             self.last_usage = None
         return response.text
+
+    def generate_json(
+        self,
+        prompt: str,
+        schema: Mapping[str, Any] | None = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Generate a JSON object using Gemini's JSON MIME type."""
+        params = {**self.config, **kwargs}
+        config = self._build_config(params) or types.GenerateContentConfig()
+        config.response_mime_type = "application/json"
+        if schema:
+            try:
+                config.response_schema = schema
+            except Exception:
+                pass
+
+        response = self.client.models.generate_content(
+            model=self.model,
+            contents=prompt,
+            config=config,
+        )
+        usage_metadata = getattr(response, "usage_metadata", None)
+        if usage_metadata is not None:
+            self.last_usage = {
+                "prompt_token_count": getattr(usage_metadata, "prompt_token_count", 0) or 0,
+                "candidates_token_count": getattr(usage_metadata, "candidates_token_count", 0) or 0,
+                "total_token_count": getattr(usage_metadata, "total_token_count", 0) or 0,
+            }
+        else:
+            self.last_usage = None
+        return parse_json_object(response.text or "{}")
 
     def stream_generate(self, prompt: str, **kwargs) -> Iterator[str]:
         """

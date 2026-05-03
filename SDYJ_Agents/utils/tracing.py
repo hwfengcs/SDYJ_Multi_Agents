@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
 from uuid import uuid4
 
-from ..llm.base import BaseLLM
+from ..llm.base import BaseLLM, parse_json_object
 from .cost import aggregate_trace_cost, estimate_call_cost_usd, normalize_usage
 
 
@@ -708,6 +708,45 @@ class InstrumentedLLM(BaseLLM):
             )
             raise
 
+    def generate_json(self, prompt: str, schema: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
+        """Generate a JSON object while preserving the same trace semantics."""
+        started = time.perf_counter()
+        call_id = f"L{len(self.trace.get('llm_calls', [])) + 1}" if self.trace else None
+        try:
+            if hasattr(self.inner, "generate_json"):
+                response_obj = self.inner.generate_json(prompt, schema=schema, **kwargs)
+            else:
+                schema_hint = ""
+                if schema:
+                    schema_hint = (
+                        "\n\nReturn a single valid JSON object matching this schema. "
+                        "Do not include Markdown fences or prose.\n"
+                        f"{json.dumps(schema, ensure_ascii=False, indent=2)}"
+                    )
+                response_obj = parse_json_object(self.inner.generate(prompt + schema_hint, **kwargs))
+            response_text = json.dumps(response_obj, ensure_ascii=False, default=_json_default)
+            latency_ms = _safe_round_ms(time.perf_counter() - started)
+            self._record_call(
+                call_id=call_id,
+                prompt=prompt,
+                response=response_text,
+                kwargs={**kwargs, "response_format": "json_object"},
+                latency_ms=latency_ms,
+                error=None,
+            )
+            return response_obj
+        except Exception as exc:
+            latency_ms = _safe_round_ms(time.perf_counter() - started)
+            self._record_call(
+                call_id=call_id,
+                prompt=prompt,
+                response="",
+                kwargs={**kwargs, "response_format": "json_object"},
+                latency_ms=latency_ms,
+                error=str(exc),
+            )
+            raise
+
     def _record_call(
         self,
         call_id: str | None,
@@ -738,6 +777,7 @@ class InstrumentedLLM(BaseLLM):
             "response_hash": _sha256_text(response),
             "temperature": kwargs.get("temperature"),
             "max_tokens": kwargs.get("max_tokens"),
+            "response_format": kwargs.get("response_format"),
             "prompt_preview": prompt[:160].replace("\n", " "),
             "response_preview": response[:240].replace("\n", " "),
             "usage": usage_dict,

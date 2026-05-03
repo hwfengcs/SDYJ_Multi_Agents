@@ -7,14 +7,17 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 # 任务说明
 基于研究问题、摘要和原始资料，撰写一份高质量的深度整合分析报告。这是研究报告的核心章节，需要展现对主题的深刻理解和独到洞察。
 
-## 研究问题
-"{{ query }}"
+<research_query>
+{{ query }}
+</research_query>
 
-## 研究摘要
+<summary>
 {{ summary }}
+</summary>
 
-## 部分原始资料
+<evidence_excerpt>
 {{ key_content }}
+</evidence_excerpt>
 
 ---
 
@@ -69,6 +72,14 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 4. **证据支撑**，每个论点都要有具体数据、案例或研究支持
 5. **批判性思维**，不回避矛盾和局限，展现分析的严谨性
 6. **专业表达**，使用学术语言，避免口语化和情绪化表达
+7. **证据约束**，所有关键判断必须能从 summary 或 evidence_excerpt 中找到支撑；不确定时标明局限
+
+<internal_reasoning_checklist>
+1. 建立2-4个分析维度，并把 evidence_excerpt 中的证据分配到对应维度。
+2. 对多源一致、互补或冲突之处分别处理。
+3. 对缺失、失败或低相关的检索结果保持保守，不补写不存在的事实。
+4. 最后检查每个主要论断是否能被证据支撑。
+</internal_reasoning_checklist>
 
 ## 格式要求
 - 使用Markdown格式，合理使用标题层级（###）

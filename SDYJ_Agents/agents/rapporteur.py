@@ -17,7 +17,29 @@ from ..utils.evidence import (
     calculate_evidence_metrics,
     format_evidence_for_prompt,
 )
+from ..utils.structured_output import generate_json_object
 from ..utils.tracing import record_report_summary
+
+
+ORGANIZED_INFO_SCHEMA = {
+    "type": "object",
+    "required": ["themes"],
+    "properties": {
+        "themes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["name", "key_points"],
+                "properties": {
+                    "name": {"type": "string"},
+                    "key_points": {"type": "array", "items": {"type": "string"}},
+                },
+                "additionalProperties": True,
+            },
+        }
+    },
+    "additionalProperties": True,
+}
 
 
 class Rapporteur:
@@ -216,17 +238,14 @@ class Rapporteur:
             summary=summary
         )
 
-        response = self.llm.generate(prompt, temperature=0.5)
-
-        # Try to parse JSON
         try:
-            start = response.find('{')
-            end = response.rfind('}') + 1
-            if start != -1 and end > start:
-                json_str = response[start:end]
-                organized = json.loads(json_str)
-                return organized
-        except json.JSONDecodeError:
+            return generate_json_object(
+                self.llm,
+                prompt,
+                schema=ORGANIZED_INFO_SCHEMA,
+                temperature=0.5,
+            )
+        except (ValueError, TypeError, json.JSONDecodeError):
             pass
 
         # Fallback structure

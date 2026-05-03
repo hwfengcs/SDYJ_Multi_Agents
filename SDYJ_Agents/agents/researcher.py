@@ -16,6 +16,7 @@ from ..tools.mcp_client import MCPClient
 from ..llm.base import BaseLLM
 from ..prompts.loader import PromptLoader
 from ..utils.evidence import merge_evidence_items, normalize_search_batch
+from ..utils.structured_output import generate_json_object
 from ..utils.tracing import record_tool_call, record_trace_event
 from ..workflow.parallel_executor import (
     SearchJobResult,
@@ -32,6 +33,21 @@ WEAK_RELEVANCE_THRESHOLD = 0.5
 # At or above this fraction of failing tool calls in a single task we always
 # trigger reflection, even if the few successful calls had decent results.
 HIGH_ERROR_RATE_THRESHOLD = 0.5
+
+REFLECTION_JSON_SCHEMA = {
+    "type": "object",
+    "required": ["diagnosis", "rewritten_queries"],
+    "properties": {
+        "diagnosis": {"type": "string"},
+        "rewritten_queries": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 0,
+            "maxItems": 2,
+        },
+    },
+    "additionalProperties": True,
+}
 
 
 class Researcher:
@@ -368,7 +384,13 @@ class Researcher:
             return []
 
         try:
-            response = self.llm.generate(prompt, temperature=0.4, max_tokens=500)
+            parsed = generate_json_object(
+                self.llm,
+                prompt,
+                schema=REFLECTION_JSON_SCHEMA,
+                temperature=0.4,
+                max_tokens=500,
+            )
         except Exception as exc:
             record_trace_event(
                 state.get('trace'),
@@ -383,7 +405,7 @@ class Researcher:
             )
             return []
 
-        rewritten = self._parse_reflection_response(response)
+        rewritten = self._clean_rewritten_queries(parsed.get('rewritten_queries') or [])
 
         record_trace_event(
             state.get('trace'),
@@ -457,20 +479,18 @@ class Researcher:
         """
         if not response:
             return []
-        text = response.strip()
-        if text.startswith('```'):
-            text = text.strip('`')
-            if text.lower().startswith('json'):
-                text = text[4:]
-        start = text.find('{')
-        end = text.rfind('}') + 1
-        if start == -1 or end <= start:
-            return []
         try:
-            parsed = json.loads(text[start:end])
-        except json.JSONDecodeError:
+            from ..llm.base import parse_json_object
+
+            parsed = parse_json_object(response)
+        except (ValueError, json.JSONDecodeError):
             return []
         rewritten = parsed.get('rewritten_queries') or []
+        return Researcher._clean_rewritten_queries(rewritten)
+
+    @staticmethod
+    def _clean_rewritten_queries(rewritten: Any) -> List[str]:
+        """Validate, strip, de-duplicate, and cap rewritten queries."""
         if not isinstance(rewritten, list):
             return []
         # Strip blanks and de-dup while preserving order.

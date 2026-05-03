@@ -7,11 +7,13 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 # 任务说明
 基于研究问题和摘要，撰写一个结构完整、具有指导意义的研究结论部分。
 
-## 研究问题
-"{{ query }}"
+<research_query>
+{{ query }}
+</research_query>
 
-## 研究摘要
+<summary>
 {{ summary }}
+</summary>
 
 ---
 
@@ -53,6 +55,14 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 3. **前瞻性**，不仅总结过去，更要指明未来方向
 4. **可操作性**，建议应具体可行，而非空洞说教
 5. **客观审慎**，承认研究局限，不过度解读结论
+6. **证据约束**，结论只能综合摘要中已经出现的信息，不新增未经支持的事实
+
+<internal_reasoning_checklist>
+1. 用一句话直接回答 research_query。
+2. 只选择摘要中证据最强的2-4个发现。
+3. 将建议写成可执行方向，而不是泛泛而谈。
+4. 明确指出仍需验证的部分。
+</internal_reasoning_checklist>
 
 ## 格式要求
 - 使用Markdown格式

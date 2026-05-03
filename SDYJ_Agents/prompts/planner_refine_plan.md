@@ -30,6 +30,13 @@ You are the Planner mid-flight. The Researcher has executed the first {{ complet
 
 You must NOT touch sub-tasks whose status is already ``completed`` — they have already run and their results are in the trace. You may freely modify, delete, or extend the *pending* sub-tasks.
 
+<internal_reasoning_checklist>
+1. Compare completed subtasks against evidence_so_far and identify what is already answered.
+2. Inspect remaining subtasks for redundancy, weak wording, or missing source fit.
+3. If a query failed because it was too narrow, add one broader fallback query; if it was too broad, add sharper canonical terms.
+4. Add a new subtask only when existing evidence reveals a concrete unanswered angle.
+</internal_reasoning_checklist>
+
 Decision rules:
 
 1. If a pending sub-task is now redundant — the question is already answered well by the evidence above — delete it.

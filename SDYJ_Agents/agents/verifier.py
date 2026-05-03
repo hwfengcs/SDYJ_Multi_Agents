@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 from ..llm.base import BaseLLM
 from ..prompts.loader import PromptLoader
 from ..utils.evidence import build_evidence_from_results, format_evidence_for_prompt
+from ..utils.structured_output import generate_json_object
 from ..workflow.state import ResearchState
 
 
@@ -47,6 +48,35 @@ DIMENSION_WEIGHTS = {
     "citation_completeness": 0.20,
     "factual_consistency": 0.20,
     "coverage": 0.25,
+}
+
+VERIFIER_JSON_SCHEMA = {
+    "type": "object",
+    "required": [
+        "scores",
+        "overall_quality",
+        "should_revise",
+        "weakest_dimension",
+        "revision_hints",
+        "summary",
+    ],
+    "properties": {
+        "scores": {
+            "type": "object",
+            "properties": {
+                dim: {"type": "number", "minimum": 0.0, "maximum": 1.0}
+                for dim in DIMENSIONS
+            },
+            "required": list(DIMENSIONS),
+            "additionalProperties": False,
+        },
+        "overall_quality": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "should_revise": {"type": "boolean"},
+        "weakest_dimension": {"type": "string", "enum": list(DIMENSIONS)},
+        "revision_hints": {"type": "array", "items": {"type": "string"}},
+        "summary": {"type": "string"},
+    },
+    "additionalProperties": True,
 }
 
 
@@ -104,13 +134,18 @@ class Verifier:
         )
 
         try:
-            response = self.llm.generate(prompt, temperature=0.1, max_tokens=1500)
+            parsed = generate_json_object(
+                self.llm,
+                prompt,
+                schema=VERIFIER_JSON_SCHEMA,
+                temperature=0.1,
+                max_tokens=1500,
+            )
         except Exception as exc:
             return _default_failure_result(
                 summary=f"Verifier LLM call failed: {exc}",
             )
 
-        parsed = _parse_verifier_response(response)
         return self._enforce_thresholds(parsed)
 
     def _enforce_thresholds(self, result: Dict[str, Any]) -> Dict[str, Any]:
@@ -191,21 +226,11 @@ def _parse_verifier_response(response: str) -> Dict[str, Any]:
     """
     if not response:
         return _default_failure_result(summary="Verifier returned empty response.")
-    text = response.strip()
-    # Strip Markdown code fences if present.
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.lower().startswith("json"):
-            text = text[4:]
-    start = text.find("{")
-    end = text.rfind("}") + 1
-    if start == -1 or end <= start:
-        return _default_failure_result(
-            summary="Verifier response was not JSON; defaulting to revise."
-        )
     try:
-        return json.loads(text[start:end])
-    except json.JSONDecodeError as exc:
+        from ..llm.base import parse_json_object
+
+        return parse_json_object(response)
+    except (ValueError, json.JSONDecodeError) as exc:
         return _default_failure_result(
             summary=f"Verifier JSON parse error: {exc}",
         )

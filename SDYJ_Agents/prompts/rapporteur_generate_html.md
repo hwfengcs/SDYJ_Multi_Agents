@@ -7,26 +7,33 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 # 任务说明
 基于提供的研究内容，生成一份完整的HTML格式研究报告。
 
-## 研究问题
-"{{ query }}"
+<research_query>
+{{ query }}
+</research_query>
 
-## 研究目标
+<research_goal>
 {{ research_goal }}
+</research_goal>
 
-## 执行摘要
+<summary>
 {{ summary }}
+</summary>
 
-## 核心发现主题
+<themes>
 {{ themes }}
+</themes>
 
-## 深度分析
+<analysis>
 {{ analysis }}
+</analysis>
 
-## 参考资料
+<citations>
 {{ citations }}
+</citations>
 
-## 结论
+<conclusion>
 {{ conclusion }}
+</conclusion>
 
 ---
 
@@ -139,6 +146,7 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 5. **优化可读性**：适当的缩进和换行
 6. **支持可访问性**：添加适当的alt属性、aria标签等
 7. **移动端友好**：使用响应式设计
+8. **内容约束**：只重排和呈现输入内容，不新增研究事实或引用
 
 ## 样式美化要点
 - 标题层级清晰（h1 > h2 > h3）

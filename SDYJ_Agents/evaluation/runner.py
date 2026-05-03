@@ -67,7 +67,40 @@ class FakeEvalLLM(BaseLLM):
     def generate(self, prompt: str, **kwargs) -> str:
         if "请将查询分类为" in prompt:
             return "RESEARCH"
-        if "Create a structured research plan" in prompt:
+        if "Planner mid-flight" in prompt:
+            return json.dumps(
+                {
+                    "research_goal": "Evaluate a complex agent system with traceable evidence",
+                    "sub_tasks": [
+                        {
+                            "task_id": 1,
+                            "description": "Collect evidence for agent evaluation metrics",
+                            "search_queries": ["agent evaluation trace evidence citation latency cost"],
+                            "sources": ["tavily", "arxiv"],
+                            "priority": 1,
+                            "status": "completed",
+                        },
+                        {
+                            "task_id": 2,
+                            "description": "Tighten analysis of failure recovery and human approval",
+                            "search_queries": ["agent tool failure recovery human approval trace"],
+                            "sources": ["tavily", "arxiv"],
+                            "priority": 2,
+                            "status": "pending",
+                        },
+                    ],
+                    "completion_criteria": (
+                        "Report must cover evidence, citation grounding, trace, latency, cost, "
+                        "tool reliability, ablation, and human control."
+                    ),
+                    "estimated_iterations": 2,
+                    "refinement_rationale": "The first task already surfaced the core metric vocabulary.",
+                }
+            )
+        if (
+            "Create a concrete, tool-aware research plan" in prompt
+            or ("<output_schema>" in prompt and "research_goal" in prompt)
+        ):
             return json.dumps(
                 {
                     "research_goal": "Evaluate a complex agent system with traceable evidence",

@@ -11,6 +11,7 @@ from ..workflow.state import ResearchState, PlanStructure, SubTask
 from ..llm.base import BaseLLM
 from ..prompts.loader import PromptLoader
 from ..utils.evidence import format_evidence_for_prompt
+from ..utils.structured_output import generate_json_object
 
 
 # After this many completed sub-tasks, give the Planner a chance to refine
@@ -18,6 +19,38 @@ from ..utils.evidence import format_evidence_for_prompt
 # something larger than 1 so the refine call has actual signal to work
 # with, but small enough that mid-flight pivots can still happen.
 DEFAULT_REFINE_AFTER_N_TASKS = 2
+
+
+PLAN_JSON_SCHEMA = {
+    "type": "object",
+    "required": ["research_goal", "sub_tasks", "completion_criteria", "estimated_iterations"],
+    "properties": {
+        "research_goal": {"type": "string"},
+        "sub_tasks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["task_id", "description", "search_queries", "sources", "priority"],
+                "properties": {
+                    "task_id": {"type": "integer"},
+                    "description": {"type": "string"},
+                    "search_queries": {"type": "array", "items": {"type": "string"}},
+                    "sources": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["tavily", "arxiv", "mcp"]},
+                    },
+                    "priority": {"type": "integer"},
+                    "status": {"type": "string"},
+                },
+                "additionalProperties": True,
+            },
+        },
+        "completion_criteria": {"type": "string"},
+        "estimated_iterations": {"type": "integer"},
+        "refinement_rationale": {"type": "string"},
+    },
+    "additionalProperties": True,
+}
 
 
 class Planner:
@@ -79,20 +112,13 @@ class Planner:
             user_feedback=user_feedback if user_feedback else None
         )
 
-        # Generate plan
-        response = self.llm.generate(prompt, temperature=0.7)
-
-        # Parse JSON response
         try:
-            # Extract JSON from response (in case LLM adds extra text)
-            start = response.find('{')
-            end = response.rfind('}') + 1
-            if start != -1 and end > start:
-                json_str = response[start:end]
-                plan = json.loads(json_str)
-            else:
-                # Fallback plan if parsing fails
-                plan = self._create_fallback_plan(query)
+            plan = generate_json_object(
+                self.llm,
+                prompt,
+                schema=PLAN_JSON_SCHEMA,
+                temperature=0.7,
+            )
 
             # Add status to subtasks
             for task in plan.get('sub_tasks', []):
@@ -102,7 +128,7 @@ class Planner:
             state['research_plan'] = plan
             state['estimated_iterations'] = plan.get('estimated_iterations', 3)
 
-        except json.JSONDecodeError:
+        except (ValueError, TypeError, json.JSONDecodeError):
             # Create fallback plan
             plan = self._create_fallback_plan(query)
             state['research_plan'] = plan
@@ -155,17 +181,15 @@ class Planner:
             modifications=modifications
         )
 
-        response = self.llm.generate(prompt, temperature=0.7)
-
-        # Parse modified plan
         try:
-            start = response.find('{')
-            end = response.rfind('}') + 1
-            if start != -1 and end > start:
-                json_str = response[start:end]
-                modified_plan = json.loads(json_str)
-                state['research_plan'] = modified_plan
-        except json.JSONDecodeError:
+            modified_plan = generate_json_object(
+                self.llm,
+                prompt,
+                schema=PLAN_JSON_SCHEMA,
+                temperature=0.7,
+            )
+            state['research_plan'] = modified_plan
+        except (ValueError, TypeError, json.JSONDecodeError):
             # Keep current plan if parsing fails
             pass
 
@@ -272,13 +296,18 @@ class Planner:
         )
 
         try:
-            response = self.llm.generate(prompt, temperature=0.3, max_tokens=2000)
+            refined_plan = generate_json_object(
+                self.llm,
+                prompt,
+                schema=PLAN_JSON_SCHEMA,
+                temperature=0.3,
+                max_tokens=2000,
+            )
         except Exception:
             # If the refine call fails we fall back to the original plan.
             state['plan_refined'] = True
             return state
 
-        refined_plan = self._parse_refined_plan(response)
         if refined_plan:
             self._merge_refined_plan_into_state(state, refined_plan, completed)
 
@@ -303,20 +332,11 @@ class Planner:
     @staticmethod
     def _parse_refined_plan(response: str) -> Optional[dict]:
         """Pull the JSON plan out of the LLM response, tolerating fences."""
-        if not response:
-            return None
-        text = response.strip()
-        if text.startswith('```'):
-            text = text.strip('`')
-            if text.lower().startswith('json'):
-                text = text[4:]
-        start = text.find('{')
-        end = text.rfind('}') + 1
-        if start == -1 or end <= start:
-            return None
         try:
-            return json.loads(text[start:end])
-        except json.JSONDecodeError:
+            from ..llm.base import parse_json_object
+
+            return parse_json_object(response)
+        except (ValueError, json.JSONDecodeError):
             return None
 
     @staticmethod

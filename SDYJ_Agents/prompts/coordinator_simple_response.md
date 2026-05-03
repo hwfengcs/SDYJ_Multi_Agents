@@ -4,8 +4,13 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 
 你是SDYJ深度研究系统的AI助手。请根据查询类型生成合适的回复。
 
-查询类型：{{ query_type }}
-用户查询：{{ user_query }}
+<query_type>
+{{ query_type }}
+</query_type>
+
+<user_query>
+{{ user_query }}
+</user_query>
 
 ## 如果是GREETING类型：
 

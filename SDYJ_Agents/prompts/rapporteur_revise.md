@@ -29,6 +29,13 @@ You are revising a research report after a quality critic flagged issues. Your j
 {{ evidence }}
 </evidence>
 
+<internal_reasoning_checklist>
+1. Map each revision hint to a concrete edit location in previous_report.
+2. For every key finding, verify that a cited evidence ID supports the claim.
+3. Remove or soften claims that cannot be grounded in evidence.
+4. Preserve sections that already satisfy the critic.
+</internal_reasoning_checklist>
+
 Revision rules:
 
 1. Address every revision hint above. If a hint says "claim X has no evidence", either add a `[Ek]` citation that supports it, or remove/soften the claim — do not leave it as-is.

@@ -28,7 +28,14 @@ You are the Researcher's reflection step. The current sub-task just executed all
 {{ evidence_terms }}
 </previously_collected_evidence_terms>
 
-Reasoning:
+<internal_reasoning_checklist>
+1. Identify the most likely cause of failure: terminology mismatch, too narrow, too broad, stale terminology, or source mismatch.
+2. Use previously collected evidence terms only when they are relevant to this task.
+3. Prefer canonical terms a search engine or arXiv index is likely to contain.
+4. If one source errored, keep the replacement query source-agnostic so the retry can still run across all configured sources.
+</internal_reasoning_checklist>
+
+Reasoning rules:
 
 1. Identify the most likely cause of failure: terminology mismatch (the original queries used jargon the sources do not index), too narrow (qualifiers blocked relevant pages), too broad (the result page was filled with off-topic noise), or a semantic gap with the configured source.
 2. Generate 1–2 *materially different* replacement queries. Do NOT simply rephrase. A good replacement either: drops a constraining qualifier, swaps in canonical terminology, narrows from a category to a specific instance, or pivots to a related angle that the sources are likelier to index.

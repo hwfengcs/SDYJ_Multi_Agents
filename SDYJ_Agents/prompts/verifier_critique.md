@@ -26,6 +26,14 @@ Read the inputs carefully, then emit a single JSON object — no prose before or
 {{ report }}
 </report>
 
+<internal_reasoning_checklist>
+1. Extract the report's main claims and citations.
+2. For each major claim, check whether at least one cited or nearby evidence item supports it.
+3. Penalize missing citations even if the claim sounds plausible.
+4. Compare the report against every planned sub-task and note dropped dimensions.
+5. Choose revision_hints that a report writer can directly act on.
+</internal_reasoning_checklist>
+
 Evaluate the report on four dimensions, each scored from 0.0 to 1.0:
 
 1. **claim_evidence_alignment** — Do the report's key findings actually trace back to the evidence above? Penalize claims that have no plausible evidence backing, *even if* they are likely true. We are checking the report's reasoning chain, not the world.

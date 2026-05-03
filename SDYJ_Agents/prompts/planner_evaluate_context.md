@@ -4,14 +4,28 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 
 Evaluate whether the gathered research context is sufficient to answer the query.
 
-Query: "{{ query }}"
+<query>
+{{ query }}
+</query>
 
-Research Plan Goal: {{ research_goal }}
-Completion Criteria: {{ completion_criteria }}
+<research_goal>
+{{ research_goal }}
+</research_goal>
 
-Number of research results gathered: {{ results_count }}
-Current iteration: {{ current_iteration }}/{{ max_iterations }}
+<completion_criteria>
+{{ completion_criteria }}
+</completion_criteria>
 
-Based on the above information, is the context sufficient to generate a comprehensive report?
+<progress>
+- research_batches_gathered: {{ results_count }}
+- current_iteration: {{ current_iteration }}
+- max_iterations: {{ max_iterations }}
+</progress>
+
+<decision_rules>
+- Respond YES if the gathered context is enough to produce a useful, evidence-grounded report.
+- Respond NO if major planned dimensions are still missing and there is remaining iteration budget.
+- If max_iterations is reached or nearly reached, prefer YES unless there are zero results.
+</decision_rules>
 
 Respond with only "YES" or "NO".

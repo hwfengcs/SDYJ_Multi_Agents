@@ -48,6 +48,9 @@ The older command remains supported:
 python main.py eval --max-scenarios 1
 ```
 
+The current v0.5-vs-v0.6 algorithm ablation table is tracked in
+[`docs/benchmark-results.md`](benchmark-results.md).
+
 ## Current Scenarios
 
 | Scenario | What it tests |
