@@ -97,7 +97,7 @@ Trace v2 bundle → outputs/runs/<run-id>/
 - **PyPI 发布流程** 用 Trusted Publishers —— 见 [docs/release-process.md](docs/release-process.md)。
 - **公开 benchmark 跑分** —— GAIA Level 1 子集与 AssistantBench，包括 v0.5-vs-v0.6 ablation。*即将到来。*
 - **Hugging Face Spaces 在线 Demo 部署**。*即将到来。*
-- **真正的 MCP 集成** —— 用官方 `mcp` Python SDK 替代当前的 HTTP 占位实现。*即将到来。*
+- **真正的 MCP 集成** —— 支持官方 `mcp` Python SDK 的 stdio / streamable HTTP transport，同时保留旧 HTTP shim 作为 fallback。
 
 完整 v0.6 计划见 [`docs/release-notes/v0.6.md`](docs/release-notes/v0.6.md) 与 [ROADMAP.md](ROADMAP.md)。
 
@@ -175,6 +175,9 @@ TAVILY_API_KEY=tvly-...
 ```
 
 其他 provider 使用各自官方变量名 —— `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GOOGLE_API_KEY`。旧的 `CLAUDE_API_KEY` 和 `GEMINI_API_KEY` 仍兼容。
+
+MCP 是可选配置。stdio、streamable HTTP 与旧 HTTP fallback 的配置方式见
+[docs/mcp.md](docs/mcp.md)。
 
 ## 输出格式
 

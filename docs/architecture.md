@@ -67,8 +67,8 @@ The Researcher currently supports:
 
 - Tavily for web search.
 - arXiv for academic paper search.
-- MCP-compatible HTTP adapter for external tools. A real SDK-backed MCP adapter
-  is tracked as a v0.6 follow-up.
+- MCP-compatible tools through either the legacy HTTP shim or the official MCP
+  Python SDK transports (`stdio` and `streamable_http`). See `docs/mcp.md`.
 
 Within a task, the Researcher can execute `(query, source)` jobs sequentially
 or through the bounded async executor in

@@ -43,6 +43,22 @@ def test_execute_task_aggregates_results_and_marks_task_completed(monkeypatch):
     assert updated["research_plan"]["sub_tasks"][0]["status"] == "completed"
 
 
+def test_researcher_initializes_mcp_from_stdio_config():
+    researcher = Researcher(
+        FakeLLM(),
+        mcp_transport="stdio",
+        mcp_command="python",
+        mcp_args=["server.py"],
+        mcp_tool_name="search_docs",
+    )
+
+    assert researcher.mcp is not None
+    assert researcher.mcp.transport == "stdio"
+    assert researcher.mcp.command == "python"
+    assert researcher.mcp.args == ["server.py"]
+    assert researcher.mcp.default_tool_name == "search_docs"
+
+
 class _Probe:
     def __init__(self):
         self.active = 0

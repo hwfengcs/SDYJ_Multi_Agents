@@ -1,0 +1,76 @@
+# MCP Integration
+
+SDYJ supports two MCP paths:
+
+- `legacy_http`: the original compatibility adapter that calls
+  `POST /tools/<tool_name>` and `GET /tools`.
+- `stdio` and `streamable_http`: official MCP Python SDK transports. Install
+  them with `pip install -e .[mcp]` or use the Conda environment.
+
+The Researcher treats MCP as another retrieval source named `mcp`. The default
+tool is `web_search`, but you can change it with `MCP_TOOL_NAME`.
+
+## Stdio Server
+
+Use a Claude-style config file:
+
+```bash
+copy mcp_config.json.example mcp_config.json
+```
+
+Then set:
+
+```bash
+MCP_TRANSPORT=stdio
+MCP_CONFIG_PATH=./mcp_config.json
+MCP_SERVER_NAME=filesystem
+MCP_TOOL_NAME=search
+```
+
+You can also configure a stdio server directly:
+
+```bash
+MCP_TRANSPORT=stdio
+MCP_COMMAND=npx
+MCP_ARGS="-y @modelcontextprotocol/server-filesystem ."
+MCP_TOOL_NAME=search
+```
+
+`MCP_ARGS` accepts either shell-style text or a JSON array:
+
+```bash
+MCP_ARGS=["-y","@modelcontextprotocol/server-filesystem","."]
+```
+
+## Streamable HTTP Server
+
+For an SDK-backed HTTP MCP server:
+
+```bash
+MCP_TRANSPORT=streamable_http
+MCP_SERVER_URL=http://localhost:8000/mcp
+MCP_API_KEY=
+MCP_TOOL_NAME=search
+```
+
+You can also use an `mcp+http://` or `mcp+https://` URL to infer
+`streamable_http` automatically.
+
+## Legacy HTTP Fallback
+
+Existing deployments that expose a simple REST shim can keep using:
+
+```bash
+MCP_TRANSPORT=legacy_http
+MCP_SERVER_URL=http://localhost:9000
+MCP_TOOL_NAME=web_search
+```
+
+The fallback expects:
+
+```text
+GET  /tools
+POST /tools/<tool_name>
+```
+
+and normalizes a JSON response with a `results` list into SDYJ evidence items.

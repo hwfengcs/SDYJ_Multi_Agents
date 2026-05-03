@@ -68,6 +68,13 @@ class Researcher:
         tavily_api_key: Optional[str] = None,
         mcp_server_url: Optional[str] = None,
         mcp_api_key: Optional[str] = None,
+        mcp_transport: Optional[str] = None,
+        mcp_tool_name: str = "web_search",
+        mcp_config_path: Optional[str] = None,
+        mcp_server_name: Optional[str] = None,
+        mcp_command: Optional[str] = None,
+        mcp_args: Optional[List[str]] = None,
+        mcp_env: Optional[Dict[str, str]] = None,
         enable_reflection: bool = True,
         enable_parallel_tool_execution: bool = True,
         parallel_concurrency_limit: int = 4,
@@ -80,6 +87,13 @@ class Researcher:
             tavily_api_key: Tavily API key (optional)
             mcp_server_url: MCP server URL (optional)
             mcp_api_key: MCP API key (optional)
+            mcp_transport: MCP transport (legacy_http, streamable_http, or stdio)
+            mcp_tool_name: Default MCP search tool name
+            mcp_config_path: Claude-style MCP config JSON path
+            mcp_server_name: Server key inside the MCP config
+            mcp_command: Direct stdio MCP server command
+            mcp_args: Direct stdio MCP server args
+            mcp_env: Direct stdio MCP server environment overrides
             enable_reflection: When True (the default in v0.6+), the
                 researcher inspects the task's results after the first pass
                 and asks the LLM to rewrite weak queries before giving up.
@@ -94,7 +108,22 @@ class Researcher:
         self.llm = llm
         self.tavily = TavilySearch(tavily_api_key) if tavily_api_key else None
         self.arxiv = ArxivSearch()
-        self.mcp = MCPClient(mcp_server_url, mcp_api_key) if mcp_server_url else None
+        has_mcp_config = bool(mcp_server_url or mcp_config_path or mcp_command)
+        self.mcp = (
+            MCPClient(
+                server_url=mcp_server_url,
+                api_key=mcp_api_key,
+                transport=mcp_transport,
+                default_tool_name=mcp_tool_name,
+                config_path=mcp_config_path,
+                server_name=mcp_server_name,
+                command=mcp_command,
+                args=mcp_args,
+                env=mcp_env,
+            )
+            if has_mcp_config
+            else None
+        )
         self.prompt_loader = PromptLoader()
         self.enable_reflection = enable_reflection
         self.enable_parallel_tool_execution = enable_parallel_tool_execution

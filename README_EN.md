@@ -97,7 +97,7 @@ See [docs/architecture.md](docs/architecture.md) for the full design notes.
 - **PyPI release pipeline** with Trusted Publishers — see [docs/release-process.md](docs/release-process.md).
 - **Public benchmark scores** — GAIA Level 1 subset and AssistantBench results, including v0.5-vs-v0.6 ablations. *Coming soon.*
 - **Hugging Face Spaces deployment** for the Streamlit app. *Coming soon.*
-- **Real MCP integration** via the official `mcp` Python SDK, replacing the current HTTP placeholder. *Coming soon.*
+- **Real MCP integration** via the official `mcp` Python SDK for stdio and streamable HTTP, with the legacy HTTP shim preserved as fallback.
 
 The full v0.6 plan lives in [`docs/release-notes/v0.6.md`](docs/release-notes/v0.6.md) and [ROADMAP.md](ROADMAP.md).
 
@@ -175,6 +175,9 @@ TAVILY_API_KEY=tvly-...
 ```
 
 Other providers use their official environment variable names — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`. Legacy aliases `CLAUDE_API_KEY` and `GEMINI_API_KEY` remain supported.
+
+MCP setup is optional. See [docs/mcp.md](docs/mcp.md) for stdio,
+streamable HTTP, and legacy HTTP configuration.
 
 ## Output formats
 

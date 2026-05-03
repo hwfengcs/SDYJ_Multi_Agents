@@ -128,6 +128,13 @@ def _build_workflow(
         tavily_api_key=env_cfg.search.tavily_api_key,
         mcp_server_url=env_cfg.search.mcp_server_url,
         mcp_api_key=env_cfg.search.mcp_api_key,
+        mcp_transport=env_cfg.search.mcp_transport,
+        mcp_tool_name=env_cfg.search.mcp_tool_name,
+        mcp_config_path=env_cfg.search.mcp_config_path,
+        mcp_server_name=env_cfg.search.mcp_server_name,
+        mcp_command=env_cfg.search.mcp_command,
+        mcp_args=env_cfg.search.mcp_args,
+        mcp_env=env_cfg.search.mcp_env,
         enable_reflection=enable_reflection,
         enable_parallel_tool_execution=enable_parallel_tool_execution,
     )
