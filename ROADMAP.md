@@ -71,13 +71,13 @@ Shipped in 0.6.0a1 and the current v0.6 branch:
 - [x] Real MCP client adapter via the official `mcp` Python SDK, with legacy HTTP fallback.
 - [x] Hugging Face Spaces-compatible root `app.py` entrypoint.
 - [x] `sdyj doctor` no-network environment preflight for local and hosted runs.
+- [x] MCP demo scripts for filesystem and GitHub servers.
 
 In progress on `feat/v0.6-self-verifying`:
 
 - [ ] Harden live end-to-end runs across DeepSeek/OpenAI/Claude/Gemini and document known provider quirks.
 - [ ] Live Hugging Face Spaces deployment for the Streamlit UI.
 - [ ] Public benchmark scores: GAIA Level 1 subset + AssistantBench, including v0.5-vs-v0.6 ablation.
-- [ ] MCP demo scripts for filesystem and GitHub servers.
 - [ ] Publish the static trace viewer on GitHub Pages.
 
 ## v0.7 - Extensibility and Runtime Reliability

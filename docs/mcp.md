@@ -42,6 +42,16 @@ MCP_TOOL_NAME=search
 MCP_ARGS=["-y","@modelcontextprotocol/server-filesystem","."]
 ```
 
+The repository also ships two helper demos:
+
+```bash
+python examples/mcp_demos/mcp_filesystem_demo.py --root .
+python examples/mcp_demos/mcp_github_demo.py --token-env GITHUB_PERSONAL_ACCESS_TOKEN
+```
+
+Pass `--list-tools` to either script to launch the server through `npx` and
+print the tools exposed to SDYJ.
+
 ## Streamable HTTP Server
 
 For an SDK-backed HTTP MCP server:
