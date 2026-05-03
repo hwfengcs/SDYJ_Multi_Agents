@@ -1,4 +1,19 @@
+from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import urlparse
+
+
+class _HrefParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.hrefs: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag != "a":
+            return
+        for name, value in attrs:
+            if name == "href" and value:
+                self.hrefs.append(value)
 
 
 def test_static_trace_viewer_contains_core_hooks():
@@ -38,3 +53,21 @@ def test_docs_index_links_pages_artifacts():
     assert "trace-viewer-demo.html" in html
     assert "benchmark-results-public.md" in html
     assert "huggingface-spaces-deploy.md" in html
+
+
+def test_docs_index_local_links_exist_in_pages_site():
+    docs_dir = Path(__file__).resolve().parents[1] / "docs"
+    html = (docs_dir / "index.html").read_text(encoding="utf-8")
+    parser = _HrefParser()
+    parser.feed(html)
+
+    missing = []
+    for href in parser.hrefs:
+        parsed = urlparse(href)
+        if parsed.scheme or parsed.netloc or parsed.path.startswith("#"):
+            continue
+        target = (docs_dir / parsed.path).resolve()
+        if not target.exists():
+            missing.append(href)
+
+    assert not missing
