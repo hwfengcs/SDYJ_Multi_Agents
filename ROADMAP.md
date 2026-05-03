@@ -67,6 +67,7 @@ Shipped in 0.6.0a1 and the current v0.6 branch:
 - [x] Prompt-engineering pass for the new JSON-producing paths, using native JSON mode where providers support it.
 - [x] Streamlit Web UI MVP with trace, plan, evidence, report, and cost tabs.
 - [x] Offline v0.5-vs-v0.6 algorithm ablation tracked in `docs/benchmark-results.md`.
+- [x] Static trace viewer for `trace.json` / `events.jsonl` inspection.
 
 In progress on `feat/v0.6-self-verifying`:
 
@@ -74,7 +75,7 @@ In progress on `feat/v0.6-self-verifying`:
 - [ ] Hugging Face Spaces deployment for the Streamlit UI.
 - [ ] Public benchmark scores: GAIA Level 1 subset + AssistantBench, including v0.5-vs-v0.6 ablation.
 - [ ] Real MCP integration via the official `mcp` Python SDK + 2 demo integrations.
-- [ ] Static trace viewer (events.jsonl timeline) on GitHub Pages.
+- [ ] Publish the static trace viewer on GitHub Pages.
 
 ## v0.7 - Extensibility and Runtime Reliability
 

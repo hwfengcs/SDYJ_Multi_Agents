@@ -113,6 +113,9 @@ sdyj replay <run-id>                   # rebuild from recorded LLM/tool I/O, no 
 sdyj diff-runs <run-a> <run-b>
 ```
 
+Open `SDYJ_Agents/web/trace_viewer.html` in a browser to inspect `trace.json`
+or `events.jsonl` with client-side filters and event details.
+
 See [docs/trace-replay.md](docs/trace-replay.md).
 
 ## Benchmarks

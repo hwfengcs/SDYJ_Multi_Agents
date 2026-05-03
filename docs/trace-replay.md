@@ -64,6 +64,18 @@ List recent run bundles:
 sdyj runs list
 ```
 
+## Static Trace Viewer
+
+For a browser-based inspection view, open
+`SDYJ_Agents/web/trace_viewer.html` from the repository and drop in either:
+
+- `outputs/runs/<run-id>/trace.json`
+- `outputs/runs/<run-id>/events.jsonl`
+
+The viewer runs fully client-side. It filters by event type, node, status, and
+free-text search, then shows the selected event's full JSON payload for quick
+debugging. A docs entry point is also available at `docs/trace-viewer-demo.html`.
+
 ## Replay
 
 Deterministic replay uses the recorded LLM and tool outputs from Trace v2. It

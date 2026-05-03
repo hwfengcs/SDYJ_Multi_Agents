@@ -113,6 +113,9 @@ sdyj replay <run-id>                   # 用录制的 LLM/tool I/O 重放，不�
 sdyj diff-runs <run-a> <run-b>
 ```
 
+也可以在浏览器打开 `SDYJ_Agents/web/trace_viewer.html`，拖入
+`trace.json` 或 `events.jsonl` 做客户端过滤和事件详情检查。
+
 详见 [docs/trace-replay.md](docs/trace-replay.md)。
 
 ## Benchmark

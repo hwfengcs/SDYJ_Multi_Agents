@@ -1,0 +1,872 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SDYJ Trace Viewer</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #f6f3ed;
+      --ink: #171615;
+      --muted: #6b6257;
+      --line: #d8d0c4;
+      --panel: #fffdfa;
+      --panel-strong: #efe8dc;
+      --teal: #0b6f68;
+      --teal-soft: #dceeea;
+      --amber: #bd7a19;
+      --amber-soft: #faead2;
+      --red: #b54134;
+      --red-soft: #f4ddd8;
+      --violet: #6b4aa0;
+      --violet-soft: #ece4f8;
+      --steel: #44515c;
+      --steel-soft: #e4e9ec;
+      --shadow: 0 22px 55px rgba(29, 24, 18, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        linear-gradient(90deg, rgba(23, 22, 21, 0.035) 1px, transparent 1px) 0 0 / 28px 28px,
+        linear-gradient(rgba(23, 22, 21, 0.035) 1px, transparent 1px) 0 0 / 28px 28px,
+        var(--paper);
+      font-family: "IBM Plex Sans", "Segoe UI", Calibri, sans-serif;
+      letter-spacing: 0;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    .shell {
+      width: min(1480px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 28px 0 42px;
+    }
+
+    .masthead {
+      display: grid;
+      grid-template-columns: minmax(320px, 1fr) minmax(360px, 560px);
+      gap: 18px;
+      align-items: stretch;
+      margin-bottom: 18px;
+    }
+
+    .title-block {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      padding: 24px;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(30px, 4.2vw, 58px);
+      line-height: 0.95;
+      letter-spacing: 0;
+      max-width: 760px;
+    }
+
+    .subtitle {
+      margin: 0;
+      max-width: 780px;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.55;
+    }
+
+    .dropzone {
+      position: relative;
+      display: grid;
+      min-height: 190px;
+      place-items: center;
+      border: 1px dashed var(--teal);
+      background:
+        linear-gradient(135deg, rgba(11, 111, 104, 0.08), rgba(189, 122, 25, 0.08)),
+        var(--panel);
+      box-shadow: var(--shadow);
+      padding: 22px;
+      text-align: center;
+    }
+
+    .dropzone.dragging {
+      outline: 4px solid rgba(11, 111, 104, 0.14);
+      background: var(--teal-soft);
+    }
+
+    .file-input {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .drop-title {
+      margin: 0 0 8px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 26px;
+    }
+
+    .drop-copy {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1.1fr 180px 180px 180px auto;
+      gap: 10px;
+      align-items: end;
+      padding: 14px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      margin-bottom: 18px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    input[type="search"],
+    select {
+      width: 100%;
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 0;
+      background: #fff;
+      color: var(--ink);
+      padding: 8px 10px;
+    }
+
+    .button-row {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    .button {
+      min-height: 38px;
+      border: 1px solid var(--ink);
+      border-radius: 0;
+      background: var(--ink);
+      color: #fff;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+
+    .button.secondary {
+      border-color: var(--line);
+      background: #fff;
+      color: var(--ink);
+    }
+
+    .button:disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .metric {
+      min-height: 94px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      padding: 14px;
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 6px;
+      overflow-wrap: anywhere;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 23px;
+      line-height: 1.05;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel-strong);
+    }
+
+    .panel-head h2 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 20px;
+      letter-spacing: 0;
+    }
+
+    .panel-body {
+      padding: 16px;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 10px;
+      max-height: 680px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .event-row {
+      display: grid;
+      grid-template-columns: 74px 112px minmax(0, 1fr) 88px;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 10px;
+      cursor: pointer;
+    }
+
+    .event-row:hover,
+    .event-row.active {
+      border-color: var(--teal);
+      box-shadow: inset 4px 0 0 var(--teal);
+    }
+
+    .seq {
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      font-size: 12px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 26px;
+      border: 1px solid transparent;
+      padding: 3px 8px;
+      color: var(--ink);
+      background: var(--steel-soft);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .type-node_start,
+    .type-node_end {
+      background: var(--teal-soft);
+      border-color: rgba(11, 111, 104, 0.25);
+    }
+
+    .type-llm_call {
+      background: var(--violet-soft);
+      border-color: rgba(107, 74, 160, 0.25);
+    }
+
+    .type-tool_call {
+      background: var(--amber-soft);
+      border-color: rgba(189, 122, 25, 0.25);
+    }
+
+    .type-decision,
+    .type-plan_refinement,
+    .type-reflection,
+    .type-verification {
+      background: var(--steel-soft);
+      border-color: rgba(68, 81, 92, 0.25);
+    }
+
+    .status-error {
+      background: var(--red-soft);
+      border-color: rgba(181, 65, 52, 0.3);
+      color: var(--red);
+    }
+
+    .event-main {
+      min-width: 0;
+    }
+
+    .event-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 800;
+    }
+
+    .event-meta {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 3px;
+    }
+
+    .latency {
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+      font-size: 12px;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .detail-item {
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 10px;
+      min-height: 72px;
+    }
+
+    .detail-item span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .detail-item strong {
+      display: block;
+      margin-top: 6px;
+      overflow-wrap: anywhere;
+      font-size: 15px;
+    }
+
+    pre {
+      min-height: 320px;
+      max-height: 620px;
+      overflow: auto;
+      margin: 0;
+      border: 1px solid var(--line);
+      background: #11100f;
+      color: #f5efe5;
+      padding: 14px;
+      font-family: "Cascadia Mono", "Fira Code", Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .empty {
+      border: 1px dashed var(--line);
+      background: rgba(255, 253, 250, 0.7);
+      padding: 28px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .error-text {
+      margin: 10px 0 0;
+      color: var(--red);
+      font-weight: 700;
+    }
+
+    @media (max-width: 1080px) {
+      .masthead,
+      .workspace {
+        grid-template-columns: 1fr;
+      }
+
+      .summary {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .toolbar {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .button-row {
+        justify-content: flex-start;
+      }
+    }
+
+    @media (max-width: 680px) {
+      .shell {
+        width: min(100vw - 20px, 1480px);
+        padding-top: 12px;
+      }
+
+      .summary,
+      .toolbar,
+      .detail-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .event-row {
+        grid-template-columns: 52px minmax(0, 1fr);
+      }
+
+      .event-row .pill,
+      .event-row .latency {
+        justify-self: start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="masthead" aria-labelledby="page-title">
+      <div class="title-block">
+        <h1 id="page-title">SDYJ Trace Viewer</h1>
+        <p class="subtitle">Inspect Trace v2 bundles locally. Drop a <code>trace.json</code> file or an <code>events.jsonl</code> timeline to filter events, inspect payloads, and spot routing, tool, verifier, or latency issues.</p>
+      </div>
+      <div class="dropzone" id="dropzone">
+        <input class="file-input" id="fileInput" type="file" accept=".json,.jsonl,application/json,application/x-ndjson">
+        <div>
+          <p class="drop-title">Load a run bundle</p>
+          <p class="drop-copy">Drop trace output here or click to choose a file.</p>
+          <p class="error-text" id="errorText" role="alert"></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="toolbar" aria-label="Trace filters">
+      <div class="field">
+        <label for="searchBox">Search</label>
+        <input id="searchBox" type="search" placeholder="event, node, query, error, metadata">
+      </div>
+      <div class="field">
+        <label for="typeFilter">Type</label>
+        <select id="typeFilter"></select>
+      </div>
+      <div class="field">
+        <label for="nodeFilter">Node</label>
+        <select id="nodeFilter"></select>
+      </div>
+      <div class="field">
+        <label for="statusFilter">Status</label>
+        <select id="statusFilter"></select>
+      </div>
+      <div class="button-row">
+        <button class="button secondary" id="loadSample" type="button">Sample</button>
+        <button class="button" id="exportFiltered" type="button" disabled>Export</button>
+      </div>
+    </section>
+
+    <section class="summary" id="summary" aria-label="Trace summary"></section>
+
+    <section class="workspace">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Timeline</h2>
+          <span id="visibleCount" class="pill">0 events</span>
+        </div>
+        <div class="panel-body">
+          <div class="timeline" id="timeline">
+            <div class="empty">No trace loaded.</div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="panel">
+        <div class="panel-head">
+          <h2>Event Detail</h2>
+          <span id="selectedBadge" class="pill">none</span>
+        </div>
+        <div class="panel-body">
+          <div class="detail-grid" id="detailGrid"></div>
+          <pre id="detailJson">{}</pre>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const state = {
+      trace: null,
+      events: [],
+      filtered: [],
+      selectedId: null,
+      filename: null
+    };
+
+    const els = {
+      dropzone: document.getElementById("dropzone"),
+      fileInput: document.getElementById("fileInput"),
+      errorText: document.getElementById("errorText"),
+      searchBox: document.getElementById("searchBox"),
+      typeFilter: document.getElementById("typeFilter"),
+      nodeFilter: document.getElementById("nodeFilter"),
+      statusFilter: document.getElementById("statusFilter"),
+      exportFiltered: document.getElementById("exportFiltered"),
+      loadSample: document.getElementById("loadSample"),
+      summary: document.getElementById("summary"),
+      timeline: document.getElementById("timeline"),
+      visibleCount: document.getElementById("visibleCount"),
+      selectedBadge: document.getElementById("selectedBadge"),
+      detailGrid: document.getElementById("detailGrid"),
+      detailJson: document.getElementById("detailJson")
+    };
+
+    const sampleTrace = {
+      schema_version: "2.0",
+      run_id: "sample_trace",
+      mode: "demo",
+      provider: "fake",
+      model: "fake-eval-llm",
+      query: "Inspect a multi-agent research run.",
+      metrics: {
+        total_cost_usd: 0.0012,
+        total_tokens: 1320,
+        citation_id_coverage: 1,
+        tool_success_rate: 0.91
+      },
+      events: [
+        { event_id: "evt_000001", seq: 1, event_type: "node_start", name: "coordinator", node: "coordinator", status: "ok", timestamp: "2026-05-03T09:00:00.000Z", latency_ms: null, metadata: { query_type: "RESEARCH" } },
+        { event_id: "evt_000002", seq: 2, event_type: "llm_call", name: "L1", node: "coordinator", status: "ok", timestamp: "2026-05-03T09:00:00.100Z", latency_ms: 640, metadata: { model: "fake-eval-llm", prompt_chars: 880, response_chars: 8 } },
+        { event_id: "evt_000003", seq: 3, event_type: "decision", name: "route_planner", node: "coordinator", status: "ok", timestamp: "2026-05-03T09:00:00.800Z", latency_ms: null, output_snapshot: { decision: "route_planner", reason: "research query" }, metadata: {} },
+        { event_id: "evt_000004", seq: 4, event_type: "tool_call", name: "tavily", node: "researcher", status: "ok", timestamp: "2026-05-03T09:00:02.000Z", latency_ms: 1180, metadata: { query: "agent evaluation trace evidence", result_count: 5 } },
+        { event_id: "evt_000005", seq: 5, event_type: "reflection", name: "researcher_reflect", node: "researcher", status: "ok", timestamp: "2026-05-03T09:00:03.400Z", latency_ms: 510, output_snapshot: { rewritten_queries: ["agent trace replay benchmark"] }, metadata: { task_id: 1 } },
+        { event_id: "evt_000006", seq: 6, event_type: "plan_refinement", name: "planner_refine", node: "researcher", status: "ok", timestamp: "2026-05-03T09:00:04.100Z", latency_ms: 430, output_snapshot: { added_task_ids: [4], removed_task_ids: [] }, metadata: { plan_refined: true } },
+        { event_id: "evt_000007", seq: 7, event_type: "verification", name: "critique#1", node: "verifier", status: "ok", timestamp: "2026-05-03T09:00:08.300Z", latency_ms: 720, output_snapshot: { overall_quality: 0.91, should_revise: false }, metadata: { summary: "Report is grounded." } }
+      ]
+    };
+
+    function normalizeEvents(trace) {
+      if (trace && Array.isArray(trace.events) && trace.events.length) {
+        return trace.events.slice().sort((a, b) => eventOrder(a) - eventOrder(b));
+      }
+
+      const events = [];
+      let seq = 1;
+      (trace.nodes || []).forEach((node) => {
+        events.push({
+          event_id: `legacy_${String(seq).padStart(6, "0")}`,
+          seq: seq++,
+          event_type: "node_end",
+          name: node.node,
+          node: node.node,
+          status: node.status || "ok",
+          timestamp: node.timestamp,
+          latency_ms: node.latency_ms,
+          metadata: node.metadata || {},
+          error: node.error || null
+        });
+      });
+      (trace.llm_calls || []).forEach((call) => {
+        events.push({
+          event_id: `legacy_${String(seq).padStart(6, "0")}`,
+          seq: seq++,
+          event_type: "llm_call",
+          name: call.call_id || "llm",
+          node: call.node || null,
+          status: call.error ? "error" : "ok",
+          timestamp: call.timestamp,
+          latency_ms: call.latency_ms,
+          metadata: {
+            model: call.model,
+            prompt_chars: call.prompt_chars,
+            response_chars: call.response_chars
+          },
+          error: call.error || null
+        });
+      });
+      (trace.tool_calls || []).forEach((call) => {
+        events.push({
+          event_id: `legacy_${String(seq).padStart(6, "0")}`,
+          seq: seq++,
+          event_type: "tool_call",
+          name: call.source,
+          node: "researcher",
+          status: call.error ? "error" : "ok",
+          timestamp: call.timestamp,
+          latency_ms: call.latency_ms,
+          metadata: {
+            query: call.query,
+            result_count: call.result_count
+          },
+          error: call.error || null
+        });
+      });
+      return events;
+    }
+
+    function eventOrder(event) {
+      if (typeof event.seq === "number") return event.seq;
+      if (event.seq) return Number(event.seq) || 0;
+      return String(event.event_id || "").replace(/\D/g, "") || 0;
+    }
+
+    function parseTraceText(text, filename) {
+      const trimmed = text.trim();
+      if (!trimmed) throw new Error("The file is empty.");
+      if (filename && filename.toLowerCase().endsWith(".jsonl")) {
+        const events = trimmed.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+        return { schema_version: "events.jsonl", run_id: filename, mode: "events", events };
+      }
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return { schema_version: "event-array", run_id: filename || "events", mode: "events", events: parsed };
+      }
+      return parsed;
+    }
+
+    function loadTrace(trace, filename) {
+      state.trace = trace || {};
+      state.events = normalizeEvents(state.trace);
+      state.filename = filename || state.trace.run_id || "trace";
+      state.selectedId = state.events[0]?.event_id || null;
+      updateFilterOptions();
+      applyFilters();
+      renderSummary();
+      renderDetail();
+      els.exportFiltered.disabled = state.events.length === 0;
+      els.errorText.textContent = "";
+    }
+
+    function updateFilterOptions() {
+      setOptions(els.typeFilter, "All types", unique(state.events.map((event) => event.event_type)));
+      setOptions(els.nodeFilter, "All nodes", unique(state.events.map((event) => event.node).filter(Boolean)));
+      setOptions(els.statusFilter, "All statuses", unique(state.events.map((event) => event.status || "ok")));
+    }
+
+    function unique(items) {
+      return [...new Set(items)].sort((a, b) => String(a).localeCompare(String(b)));
+    }
+
+    function setOptions(select, allLabel, values) {
+      const current = select.value;
+      select.innerHTML = "";
+      select.append(new Option(allLabel, ""));
+      values.forEach((value) => select.append(new Option(value, value)));
+      select.value = values.includes(current) ? current : "";
+    }
+
+    function applyFilters() {
+      const needle = els.searchBox.value.trim().toLowerCase();
+      const type = els.typeFilter.value;
+      const node = els.nodeFilter.value;
+      const status = els.statusFilter.value;
+
+      state.filtered = state.events.filter((event) => {
+        if (type && event.event_type !== type) return false;
+        if (node && event.node !== node) return false;
+        if (status && (event.status || "ok") !== status) return false;
+        if (!needle) return true;
+        return JSON.stringify(event).toLowerCase().includes(needle);
+      });
+
+      if (state.filtered.length && !state.filtered.some((event) => event.event_id === state.selectedId)) {
+        state.selectedId = state.filtered[0].event_id;
+      }
+      renderTimeline();
+      renderDetail();
+    }
+
+    function renderSummary() {
+      const trace = state.trace || {};
+      const metrics = trace.metrics || {};
+      const errors = state.events.filter((event) => event.status === "error" || event.error).length;
+      const totalLatency = state.events.reduce((sum, event) => sum + (Number(event.latency_ms) || 0), 0);
+      const values = [
+        ["Run ID", trace.run_id || state.filename || "-"],
+        ["Mode", trace.mode || "-"],
+        ["Provider", trace.provider || "-"],
+        ["Events", String(state.events.length)],
+        ["Errors", String(errors)],
+        ["Latency", `${totalLatency} ms`],
+        ["Cost", typeof metrics.total_cost_usd === "number" ? `$${metrics.total_cost_usd.toFixed(4)}` : "-"],
+        ["Tokens", metrics.total_tokens ?? "-"],
+        ["Citation coverage", percent(metrics.citation_id_coverage)],
+        ["Tool success", percent(metrics.tool_success_rate)],
+        ["Verifier", metrics.verifier_overall_quality ?? "-"],
+        ["Query", trace.query || "-"]
+      ];
+      els.summary.innerHTML = values.map(([label, value]) => `
+        <div class="metric">
+          <label>${escapeHtml(label)}</label>
+          <strong>${escapeHtml(String(value))}</strong>
+        </div>
+      `).join("");
+    }
+
+    function percent(value) {
+      return typeof value === "number" ? `${Math.round(value * 100)}%` : "-";
+    }
+
+    function renderTimeline() {
+      els.visibleCount.textContent = `${state.filtered.length} events`;
+      if (!state.events.length) {
+        els.timeline.innerHTML = `<div class="empty">No trace loaded.</div>`;
+        return;
+      }
+      if (!state.filtered.length) {
+        els.timeline.innerHTML = `<div class="empty">No events match the current filters.</div>`;
+        return;
+      }
+      els.timeline.innerHTML = state.filtered.map((event) => {
+        const isActive = event.event_id === state.selectedId ? " active" : "";
+        const typeClass = `type-${String(event.event_type || "unknown").replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+        const statusClass = event.status === "error" || event.error ? " status-error" : "";
+        const meta = summarizeEvent(event);
+        return `
+          <button class="event-row${isActive}" type="button" data-event-id="${escapeHtml(event.event_id || "")}">
+            <span class="seq">#${escapeHtml(String(event.seq ?? "-"))}</span>
+            <span class="pill ${typeClass}${statusClass}">${escapeHtml(event.event_type || "event")}</span>
+            <span class="event-main">
+              <span class="event-name">${escapeHtml(event.name || event.event_id || "event")}</span>
+              <span class="event-meta">${escapeHtml(meta)}</span>
+            </span>
+            <span class="latency">${formatLatency(event.latency_ms)}</span>
+          </button>
+        `;
+      }).join("");
+      els.timeline.querySelectorAll("[data-event-id]").forEach((row) => {
+        row.addEventListener("click", () => {
+          state.selectedId = row.getAttribute("data-event-id");
+          renderTimeline();
+          renderDetail();
+        });
+      });
+    }
+
+    function summarizeEvent(event) {
+      const pieces = [];
+      if (event.node) pieces.push(`node=${event.node}`);
+      if (event.timestamp) pieces.push(event.timestamp);
+      if (event.error) pieces.push(`error=${event.error}`);
+      const metadata = event.metadata || {};
+      if (metadata.query) pieces.push(`query=${metadata.query}`);
+      if (metadata.result_count !== undefined) pieces.push(`results=${metadata.result_count}`);
+      if (metadata.summary) pieces.push(metadata.summary);
+      return pieces.join(" | ");
+    }
+
+    function renderDetail() {
+      const event = state.events.find((item) => item.event_id === state.selectedId) || state.filtered[0] || null;
+      if (!event) {
+        els.selectedBadge.textContent = "none";
+        els.detailGrid.innerHTML = "";
+        els.detailJson.textContent = "{}";
+        return;
+      }
+      els.selectedBadge.textContent = event.event_id || "selected";
+      const detail = [
+        ["Type", event.event_type || "-"],
+        ["Name", event.name || "-"],
+        ["Node", event.node || "-"],
+        ["Status", event.error ? "error" : event.status || "ok"],
+        ["Timestamp", event.timestamp || "-"],
+        ["Latency", formatLatency(event.latency_ms)]
+      ];
+      els.detailGrid.innerHTML = detail.map(([label, value]) => `
+        <div class="detail-item">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(String(value))}</strong>
+        </div>
+      `).join("");
+      els.detailJson.textContent = JSON.stringify(event, null, 2);
+    }
+
+    function formatLatency(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric) || numeric <= 0) return "-";
+      return `${numeric} ms`;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function exportFiltered() {
+      const payload = state.filtered.map((event) => JSON.stringify(event)).join("\n");
+      const blob = new Blob([payload], { type: "application/x-ndjson" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${state.trace?.run_id || "trace"}-filtered-events.jsonl`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function handleFile(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          loadTrace(parseTraceText(String(reader.result || ""), file.name), file.name);
+        } catch (error) {
+          els.errorText.textContent = error.message || String(error);
+        }
+      };
+      reader.onerror = () => {
+        els.errorText.textContent = "Could not read the selected file.";
+      };
+      reader.readAsText(file);
+    }
+
+    ["dragenter", "dragover"].forEach((eventName) => {
+      els.dropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        els.dropzone.classList.add("dragging");
+      });
+    });
+
+    ["dragleave", "drop"].forEach((eventName) => {
+      els.dropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        els.dropzone.classList.remove("dragging");
+      });
+    });
+
+    els.dropzone.addEventListener("drop", (event) => handleFile(event.dataTransfer.files[0]));
+    els.fileInput.addEventListener("change", (event) => handleFile(event.target.files[0]));
+    els.searchBox.addEventListener("input", applyFilters);
+    els.typeFilter.addEventListener("change", applyFilters);
+    els.nodeFilter.addEventListener("change", applyFilters);
+    els.statusFilter.addEventListener("change", applyFilters);
+    els.exportFiltered.addEventListener("click", exportFiltered);
+    els.loadSample.addEventListener("click", () => loadTrace(sampleTrace, "sample"));
+
+    renderSummary();
+  </script>
+</body>
+</html>
