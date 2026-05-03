@@ -22,6 +22,7 @@ from rich.panel import Panel
 from rich.markdown import Markdown
 from rich.table import Table
 
+from .. import __version__
 from ..evaluation import run_evaluation
 from ..evaluation.scenarios import list_scenarios
 from ..utils.config import load_config_from_env
@@ -1123,7 +1124,7 @@ def parse_args(argv: Any) -> argparse.Namespace:
     root_parser.add_argument(
         "--version",
         action="version",
-        version="SDYJ Deep Research System 0.5.0"
+        version=f"SDYJ Deep Research System {__version__}"
     )
 
     if argv and argv[0] in {"-h", "--help", "--version"}:

@@ -33,7 +33,7 @@ Most open-source agent frameworks ship a happy-path workflow and stop there. The
 | Per-call token + USD cost in trace| ✅ | ⚠️ | ⚠️ | ❌ |
 | Benchmark gates with `--fail-under` | ✅ | ❌ | ❌ | ❌ |
 | 4 LLM providers w/ unified abstraction | ✅ | ✅ | ✅ | ⚠️ |
-| Self-verifying revise loop        | 🚧 v0.6 | ❌ | ❌ | ❌ |
+| Self-verifying revise loop        | ✅ v0.6 alpha | ❌ | ❌ | ❌ |
 | Public benchmark numbers (GAIA / AssistantBench) | 🚧 v0.6 | ⚠️ | ⚠️ | ❌ |
 
 ✅ first-class · ⚠️ partial / requires custom code · ❌ not provided · 🚧 in progress
@@ -76,7 +76,7 @@ Researcher ─ Tavily / arXiv / MCP retrieval (loop)
 Rapporteur ─ Markdown / HTML / JSON report
     │
     ▼
-Verifier (v0.6, in progress) ─ critique + revise loop
+Verifier ─ critique + revise loop
     │
     ▼
 Trace v2 bundle → outputs/runs/<run-id>/
@@ -88,11 +88,15 @@ See [docs/architecture.md](docs/architecture.md) for the full design notes.
 
 - **Per-call token + USD cost tracking** in every LLM call — see [`SDYJ_Agents/utils/cost.py`](SDYJ_Agents/utils/cost.py). The CLI `inspect-run` shows a per-call cost table and the trace `metrics` block aggregates totals.
 - **Provider-agnostic usage capture**: OpenAI, Claude, DeepSeek, and Gemini now expose `last_usage` so cost estimation works regardless of provider.
+- **Verifier loop** — a critic agent re-reads the report against evidence and can trigger bounded Rapporteur revisions when claims are unsupported.
+- **Reflexive Researcher** — empty, failing, or low-relevance query batches now trigger one query-rewrite retry.
+- **Mid-flight plan refinement** — after enough subtasks complete, the Planner can revise the remaining plan based on collected evidence.
+- **Parallel tool execution** — each task can run its `(query, source)` lookups concurrently with a bounded concurrency limit.
+- **Structured output path** — Planner, Rapporteur organization, Researcher reflection, and Verifier use provider-native JSON mode when available.
+- **Streamlit Web UI MVP** — run it locally with `streamlit run streamlit_app.py` or `streamlit run SDYJ_Agents/web/app.py`.
 - **PyPI release pipeline** with Trusted Publishers — see [docs/release-process.md](docs/release-process.md).
-- **Verifier loop** — a critic agent re-reads the report against evidence and triggers revision when claims are unsupported. *Coming soon.*
-- **Reflexive Researcher** — when a query batch returns empty or low-relevance results, the agent rewrites the query and retries. *Coming soon.*
 - **Public benchmark scores** — GAIA Level 1 subset and AssistantBench results, including v0.5-vs-v0.6 ablations. *Coming soon.*
-- **Streamlit Web UI + Hugging Face Spaces demo**. *Coming soon.*
+- **Hugging Face Spaces deployment** for the Streamlit app. *Coming soon.*
 - **Real MCP integration** via the official `mcp` Python SDK, replacing the current HTTP placeholder. *Coming soon.*
 
 The full v0.6 plan lives in [`docs/release-notes/v0.6.md`](docs/release-notes/v0.6.md) and [ROADMAP.md](ROADMAP.md).
@@ -139,7 +143,7 @@ Add `--live-search` for real retrieval. See [docs/benchmark.md](docs/benchmark.m
 
 ```text
 SDYJ_Agents/
-  agents/       # Coordinator / Planner / Researcher / Rapporteur (+ Verifier in v0.6)
+  agents/       # Coordinator / Planner / Researcher / Rapporteur / Verifier
   cli/          # argparse CLI and interactive menu
   llm/          # provider-agnostic LLM wrappers (OpenAI / Claude / Gemini / DeepSeek)
   prompts/      # Jinja prompt templates

@@ -50,7 +50,7 @@ prompting problem*. The release pivots SDYJ from a "well-engineered LangGraph
 demo" into a differentiated open-source product. See
 [docs/release-notes/v0.6.md](docs/release-notes/v0.6.md) for the full plan.
 
-Shipped in 0.6.0a1:
+Shipped in 0.6.0a1 and the current v0.6 branch:
 
 - [x] Per-call token + USD cost estimation in `SDYJ_Agents/utils/cost.py`.
 - [x] All four LLM providers expose `last_usage` for cost/token capture.
@@ -60,15 +60,18 @@ Shipped in 0.6.0a1:
 - [x] PyPI Trusted-Publishers-based release pipeline with separate TestPyPI / PyPI tracks.
 - [x] Packaging extras: `[web]`, `[mcp]`, `[benchmarks]`, `[all]`.
 - [x] English-first README with comparison table and v0.6 status.
+- [x] Verifier agent + bounded revise loop (5th LangGraph node).
+- [x] Reflexive Researcher: query rewrite + retry on empty / low-relevance batches.
+- [x] Plan refinement: Planner sees collected evidence after N tasks and adapts the rest of the plan.
+- [x] Parallel tool execution within a task (asyncio.gather + concurrency limit).
+- [x] Prompt-engineering pass for the new JSON-producing paths, using native JSON mode where providers support it.
+- [x] Streamlit Web UI MVP with trace, plan, evidence, report, and cost tabs.
+- [x] Offline v0.5-vs-v0.6 algorithm ablation tracked in `docs/benchmark-results.md`.
 
 In progress on `feat/v0.6-self-verifying`:
 
-- [ ] Verifier agent + revise loop (5th LangGraph node).
-- [ ] Reflexive Researcher: query rewrite + retry on empty / low-relevance batches.
-- [ ] Plan refinement: Planner sees collected evidence after N tasks and adapts the rest of the plan.
-- [ ] Parallel tool execution within a task (asyncio.gather + concurrency limit).
-- [ ] Prompt-engineering pass: XML inputs, few-shot, native JSON mode.
-- [ ] Streamlit Web UI + Hugging Face Spaces deployment.
+- [ ] Harden live end-to-end runs across DeepSeek/OpenAI/Claude/Gemini and document known provider quirks.
+- [ ] Hugging Face Spaces deployment for the Streamlit UI.
 - [ ] Public benchmark scores: GAIA Level 1 subset + AssistantBench, including v0.5-vs-v0.6 ablation.
 - [ ] Real MCP integration via the official `mcp` Python SDK + 2 demo integrations.
 - [ ] Static trace viewer (events.jsonl timeline) on GitHub Pages.

@@ -1,3 +1,6 @@
+import pytest
+
+from SDYJ_Agents import __version__
 from SDYJ_Agents.cli.main import (
     _create_config_from_args,
     get_api_key_for_provider,
@@ -66,3 +69,11 @@ def test_get_api_key_accepts_provider_aliases(monkeypatch):
     monkeypatch.setenv("CLAUDE_API_KEY", "legacy-key")
 
     assert get_api_key_for_provider("claude") == "legacy-key"
+
+
+def test_version_flag_matches_package_version(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        parse_args(["--version"])
+
+    assert exc_info.value.code == 0
+    assert __version__ in capsys.readouterr().out

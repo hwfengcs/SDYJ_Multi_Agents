@@ -33,7 +33,7 @@
 | 每次调用的 token + USD cost       | ✅ | ⚠️ | ⚠️ | ❌ |
 | benchmark 阈值 gate (`--fail-under`) | ✅ | ❌ | ❌ | ❌ |
 | 4 个 LLM provider 统一抽象层      | ✅ | ✅ | ✅ | ⚠️ |
-| 自验证修订 loop                   | 🚧 v0.6 | ❌ | ❌ | ❌ |
+| 自验证修订 loop                   | ✅ v0.6 alpha | ❌ | ❌ | ❌ |
 | 公开 benchmark 跑分（GAIA 等）    | 🚧 v0.6 | ⚠️ | ⚠️ | ❌ |
 
 ✅ 一等公民 · ⚠️ 部分支持 / 需自己写 · ❌ 不提供 · 🚧 进行中
@@ -76,7 +76,7 @@ Researcher ─ Tavily / arXiv / MCP 检索（迭代）
 Rapporteur ─ Markdown / HTML / JSON 报告
     │
     ▼
-Verifier（v0.6 进行中）─ critique + revise loop
+Verifier ─ critique + revise loop
     │
     ▼
 Trace v2 bundle → outputs/runs/<run-id>/
@@ -88,11 +88,15 @@ Trace v2 bundle → outputs/runs/<run-id>/
 
 - **每次 LLM 调用的 token 与美元成本跟踪** —— 见 [`SDYJ_Agents/utils/cost.py`](SDYJ_Agents/utils/cost.py)。CLI `inspect-run` 会展示每次调用的成本表，trace.metrics 累计总额。
 - **provider 无关的 usage 捕获**：OpenAI、Claude、DeepSeek、Gemini 都会暴露 `last_usage`，无论 provider 都能算 cost。
+- **Verifier loop** —— 由独立 critic agent 检查报告与证据是否一致，不达标会触发有上限的 Rapporteur 修订。
+- **Reflexive Researcher** —— 当一批查询返回为空、失败或相关性低时，agent 会重写查询并重试一次。
+- **中途计划修订** —— 完成足够子任务后，Planner 会基于已收集证据调整剩余计划。
+- **并行工具执行** —— 单个 task 内的 `(query, source)` 检索可以按并发上限同时运行。
+- **结构化输出链路** —— Planner、Rapporteur 信息组织、Researcher 反思、Verifier 优先使用 provider 原生 JSON mode。
+- **Streamlit Web UI MVP** —— 本地运行：`streamlit run streamlit_app.py` 或 `streamlit run SDYJ_Agents/web/app.py`。
 - **PyPI 发布流程** 用 Trusted Publishers —— 见 [docs/release-process.md](docs/release-process.md)。
-- **Verifier loop** —— 由独立 critic agent 检查报告与证据是否一致，不达标会触发修订。*即将到来。*
-- **Reflexive Researcher** —— 当一批查询返回为空或相关性低时，agent 会重写查询并重试。*即将到来。*
 - **公开 benchmark 跑分** —— GAIA Level 1 子集与 AssistantBench，包括 v0.5-vs-v0.6 ablation。*即将到来。*
-- **Streamlit Web UI + Hugging Face Spaces 在线 Demo**。*即将到来。*
+- **Hugging Face Spaces 在线 Demo 部署**。*即将到来。*
 - **真正的 MCP 集成** —— 用官方 `mcp` Python SDK 替代当前的 HTTP 占位实现。*即将到来。*
 
 完整 v0.6 计划见 [`docs/release-notes/v0.6.md`](docs/release-notes/v0.6.md) 与 [ROADMAP.md](ROADMAP.md)。
@@ -139,7 +143,7 @@ sdyj benchmark run \
 
 ```text
 SDYJ_Agents/
-  agents/       # Coordinator / Planner / Researcher / Rapporteur（v0.6 加 Verifier）
+  agents/       # Coordinator / Planner / Researcher / Rapporteur / Verifier
   cli/          # argparse CLI 与交互菜单
   llm/          # provider 无关的 LLM 抽象层（OpenAI / Claude / Gemini / DeepSeek）
   prompts/      # Jinja 提示词模板
