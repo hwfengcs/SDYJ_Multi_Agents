@@ -86,7 +86,7 @@ Issues = "https://github.com/hwfengcs/SDYJ_Multi_Agents/issues"
 include = ["SDYJ_Agents*"]
 
 [tool.setuptools.package-data]
-SDYJ_Agents = ["prompts/*.md", "web/*.html"]
+SDYJ_Agents = ["prompts/*.md", "web/*.html", "benchmarks/fixtures/*.jsonl"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

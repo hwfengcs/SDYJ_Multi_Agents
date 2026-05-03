@@ -51,6 +51,70 @@ sdyj eval --max-scenarios 1
 The current v0.5-vs-v0.6 algorithm ablation table is tracked in
 [`docs/benchmark-results.md`](benchmark-results.md).
 
+## External Public Benchmark Slices
+
+`sdyj benchmark external` is the reproducible harness for public benchmark
+slices such as GAIA. It separates three things that are easy to conflate:
+
+- loading examples,
+- collecting or importing predictions,
+- grading predictions and writing artifacts.
+
+Dry-run the pipeline without API keys or Hugging Face login:
+
+```bash
+sdyj benchmark external --suite gaia --source local --limit 3 --output-dir outputs/public_benchmarks
+```
+
+This uses a tiny synthetic GAIA-style fixture. It is not a public score; it
+only proves the command, output layout, and grader are working.
+
+Grade a predictions file:
+
+```bash
+sdyj benchmark external \
+  --suite gaia \
+  --source jsonl \
+  --data-path data/gaia_sample.jsonl \
+  --predictions outputs/my_gaia_predictions.jsonl \
+  --limit 5 \
+  --output-dir outputs/public_benchmarks
+```
+
+Prediction rows are JSONL:
+
+```jsonl
+{"task_id":"example-id","prediction":"final short answer"}
+```
+
+Attempt a real Hugging Face GAIA slice after logging in and accepting dataset
+terms:
+
+```bash
+huggingface-cli login
+sdyj benchmark external \
+  --suite gaia \
+  --source hf \
+  --hf-dataset gaia-benchmark/GAIA \
+  --hf-config 2023_level1 \
+  --split validation \
+  --limit 5 \
+  --predictions outputs/gaia_predictions.jsonl \
+  --output-dir outputs/public_benchmarks
+```
+
+Each run writes:
+
+- `manifest.jsonl` with task ids/questions and `has_expected_answer`;
+- `predictions.jsonl`, either imported from `--predictions` or generated from
+  fixture baseline predictions;
+- `graded.jsonl` with per-task correctness;
+- `summary.json` with accuracy, pass/fail status, and artifact paths.
+
+Real GAIA validation/test data may be gated. If Hugging Face access is missing,
+record that blocker in `docs/live-run-notes.md` and use `--source local` or
+`--source jsonl` to keep the harness itself tested.
+
 ## Current Scenarios
 
 | Scenario | What it tests |

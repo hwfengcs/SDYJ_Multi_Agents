@@ -25,6 +25,7 @@ from rich.markdown import Markdown
 from rich.table import Table
 
 from .. import __version__
+from ..benchmarks import run_external_benchmark
 from ..evaluation import run_evaluation
 from ..evaluation.scenarios import list_scenarios
 from ..utils.config import load_config_from_env, _parse_env_args, _parse_env_json_object
@@ -1178,6 +1179,47 @@ def execute_evaluation(args: argparse.Namespace) -> int:
         return 1
 
 
+def execute_external_benchmark(args: argparse.Namespace) -> int:
+    """Run an external/public benchmark slice and print a compact summary."""
+    try:
+        summary = run_external_benchmark(
+            suite=args.suite,
+            source=args.source,
+            split=args.split,
+            limit=args.limit,
+            output_dir=args.output_dir,
+            predictions_path=args.predictions,
+            data_path=args.data_path,
+            hf_dataset=args.hf_dataset,
+            hf_config=args.hf_config,
+            fail_under=args.fail_under,
+        )
+    except Exception as e:
+        error_console.print(f"[red][ERR] External benchmark failed: {e}[/red]")
+        return 1
+
+    table = Table(title="SDYJ External Benchmark")
+    table.add_column("Suite")
+    table.add_column("Source")
+    table.add_column("Examples", justify="right")
+    table.add_column("Correct", justify="right")
+    table.add_column("Accuracy", justify="right")
+    table.add_column("Passed")
+    table.add_row(
+        summary["suite"],
+        summary["source"],
+        str(summary["example_count"]),
+        str(summary["correct"]),
+        f"{summary['accuracy']:.4f}",
+        "yes" if summary["passed"] else "no",
+    )
+    console.print(table)
+    console.print(f"[green][OK] summary: {summary['artifacts']['summary']}[/green]")
+    console.print(f"[dim]predictions: {summary['artifacts']['predictions']}[/dim]")
+    console.print(f"[dim]graded: {summary['artifacts']['graded']}[/dim]")
+    return 0 if summary["passed"] else 3
+
+
 def _add_runtime_options(parser: argparse.ArgumentParser, saved_config: Dict[str, Any]) -> None:
     """Add shared options used by research and interactive modes."""
     parser.add_argument(
@@ -1387,6 +1429,34 @@ def parse_args(argv: Any) -> argparse.Namespace:
         args.runs_command = args.runs_command or "list"
         return args
 
+    if argv and argv[0] == "benchmark" and len(argv) > 1 and argv[1] == "external":
+        parser = argparse.ArgumentParser(description="Run a public/external benchmark slice")
+        parser.add_argument("--suite", default="gaia", choices=["gaia"], help="External suite name")
+        parser.add_argument(
+            "--source",
+            default="local",
+            choices=["local", "hf", "jsonl"],
+            help="Example source: bundled smoke fixture, Hugging Face, or a JSONL file",
+        )
+        parser.add_argument("--split", default="validation", help="Dataset split for --source hf")
+        parser.add_argument("--limit", type=int, default=5, help="Maximum examples to grade")
+        parser.add_argument(
+            "--output-dir",
+            default=saved_config.get("output_dir", "./outputs"),
+            help="Directory for benchmark artifacts",
+        )
+        parser.add_argument(
+            "--predictions",
+            help="JSONL file with task_id and prediction fields; omitted uses fixture baseline predictions",
+        )
+        parser.add_argument("--data-path", help="JSONL examples path for --source jsonl")
+        parser.add_argument("--hf-dataset", default="gaia-benchmark/GAIA", help="HF dataset id")
+        parser.add_argument("--hf-config", default="2023_level1", help="HF dataset config")
+        parser.add_argument("--fail-under", type=float, default=None, help="Fail if accuracy is below this value")
+        args = parser.parse_args(argv[2:])
+        args.command = "benchmark-external"
+        return args
+
     if argv and argv[0] == "benchmark" and len(argv) > 1 and argv[1] == "compare":
         parser = argparse.ArgumentParser(description="比较两个 benchmark summary JSON")
         parser.add_argument("baseline", help="基准 eval_summary JSON")
@@ -1587,6 +1657,9 @@ def main(argv: Any = None) -> int:
 
     if args.command == "benchmark-compare":
         return compare_benchmark_summaries(args.baseline, args.candidate, as_json=args.json)
+
+    if args.command == "benchmark-external":
+        return execute_external_benchmark(args)
 
     if args.command == "eval":
         if args.live and not get_api_key_for_provider(args.provider):

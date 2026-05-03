@@ -40,6 +40,7 @@ def test_parse_utility_commands_without_api_key():
         "--enable-parallel-tools",
     ])
     benchmark_args = parse_args(["benchmark", "run", "--fail-under", "0.7", "--determinism-repeats", "2"])
+    benchmark_external = parse_args(["benchmark", "external", "--suite", "gaia", "--limit", "2"])
     replay_args = parse_args(["replay", "abc123"])
     diff_args = parse_args(["diff-runs", "run-a", "run-b", "--json"])
     runs_args = parse_args(["runs", "list", "--limit", "5"])
@@ -59,6 +60,9 @@ def test_parse_utility_commands_without_api_key():
     assert benchmark_args.command == "eval"
     assert benchmark_args.fail_under == 0.7
     assert benchmark_args.determinism_repeats == 2
+    assert benchmark_external.command == "benchmark-external"
+    assert benchmark_external.suite == "gaia"
+    assert benchmark_external.limit == 2
     assert replay_args.command == "replay"
     assert diff_args.command == "diff-runs"
     assert diff_args.json is True

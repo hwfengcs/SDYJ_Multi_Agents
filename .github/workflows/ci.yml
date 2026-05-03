@@ -41,3 +41,10 @@ jobs:
           DEEPSEEK_API_KEY: dummy
           LLM_PROVIDER: deepseek
         run: pytest
+
+      - name: Benchmark gate
+        shell: bash -el {0}
+        env:
+          DEEPSEEK_API_KEY: dummy
+          LLM_PROVIDER: deepseek
+        run: sdyj benchmark run --max-scenarios 1 --max-iterations 2 --fail-under 0.75 --output-dir outputs/ci_benchmark

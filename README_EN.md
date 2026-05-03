@@ -143,6 +143,17 @@ sdyj benchmark run \
 
 Add `--live-search` for real retrieval. See [docs/benchmark.md](docs/benchmark.md).
 
+The public benchmark harness now has a reproducible entrypoint:
+
+```bash
+sdyj benchmark external --suite gaia --source local --limit 3 --output-dir outputs/public_benchmarks
+```
+
+The local source is a synthetic GAIA-style smoke fixture; it only proves the
+runner, grader, and artifact layout. Real GAIA Level 1 runs should use
+`--source hf` after Hugging Face login and dataset access are confirmed. Results
+are tracked in [docs/benchmark-results-public.md](docs/benchmark-results-public.md).
+
 ## Project layout
 
 ```text

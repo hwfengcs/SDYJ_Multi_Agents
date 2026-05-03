@@ -143,6 +143,14 @@ sdyj benchmark run \
 
 加 `--live-search` 同时启用真实检索。详见 [docs/benchmark.md](docs/benchmark.md)。
 
+公开 benchmark harness 已有可复现入口：
+
+```bash
+sdyj benchmark external --suite gaia --source local --limit 3 --output-dir outputs/public_benchmarks
+```
+
+本地 `local` 数据是 synthetic GAIA-style smoke fixture，只证明 runner / grader / artifact layout。真实 GAIA Level 1 需使用 `--source hf` 并完成 Hugging Face 登录与数据集访问确认，结果记录见 [docs/benchmark-results-public.md](docs/benchmark-results-public.md)。
+
 ## 项目结构
 
 ```text
