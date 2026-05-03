@@ -12,19 +12,19 @@ one-off demos. A benchmark run should answer three questions:
 Offline benchmark with canned evidence and fake LLM:
 
 ```bash
-python main.py benchmark run --max-scenarios 1 --max-iterations 2
+sdyj benchmark run --max-scenarios 1 --max-iterations 2
 ```
 
 Use it as a CI gate:
 
 ```bash
-python main.py benchmark run --fail-under 0.75
+sdyj benchmark run --fail-under 0.75
 ```
 
 Override individual metric thresholds:
 
 ```bash
-python main.py benchmark run \
+sdyj benchmark run \
   --threshold trace_completeness=0.9 \
   --threshold citation_id_coverage=0.8
 ```
@@ -32,20 +32,20 @@ python main.py benchmark run \
 Check deterministic behavior by repeating offline runs:
 
 ```bash
-python main.py benchmark run --determinism-repeats 2
+sdyj benchmark run --determinism-repeats 2
 ```
 
 Compare against a saved summary:
 
 ```bash
-python main.py benchmark run --compare-summary outputs/eval_reports/eval_summary_YYYYMMDD_HHMMSS.json
-python main.py benchmark compare baseline.json candidate.json
+sdyj benchmark run --compare-summary outputs/eval_reports/eval_summary_YYYYMMDD_HHMMSS.json
+sdyj benchmark compare baseline.json candidate.json
 ```
 
 The older command remains supported:
 
 ```bash
-python main.py eval --max-scenarios 1
+sdyj eval --max-scenarios 1
 ```
 
 The current v0.5-vs-v0.6 algorithm ablation table is tracked in
@@ -86,7 +86,7 @@ Each scenario can define thresholds. A benchmark summary includes:
 Run a real model while keeping canned evidence stable:
 
 ```bash
-python main.py benchmark run \
+sdyj benchmark run \
   --live \
   --provider deepseek \
   --model deepseek-v4-flash \
@@ -96,7 +96,7 @@ python main.py benchmark run \
 Also evaluate real retrieval:
 
 ```bash
-python main.py benchmark run --live --live-search
+sdyj benchmark run --live --live-search
 ```
 
 Live-search scores can drift because external search results change. Use them

@@ -41,11 +41,13 @@
 ## 快速开始（60 秒）
 
 ```bash
-pip install sdyj-multi-agents          # 或从源码：pip install -e ".[dev]"
-export DEEPSEEK_API_KEY=sk-...          # 跑 benchmark 最便宜的 provider
-export TAVILY_API_KEY=tvly-...
+conda env create -f environment.yml
+conda activate sdyj
+cp .env.example .env                    # Windows PowerShell: copy .env.example .env
 sdyj research "RAG Agent 如何做可靠性评估？"
 ```
+
+在 `.env` 中填入 `DEEPSEEK_API_KEY` 与 `TAVILY_API_KEY` 后即可运行。完整环境说明见 [docs/conda-setup.md](docs/conda-setup.md)。
 
 不带 query 进入交互式菜单：
 
@@ -178,12 +180,13 @@ TAVILY_API_KEY=tvly-...
 ## 开发
 
 ```bash
-python -m pip install -e ".[dev]"
+conda env update -n sdyj -f environment.yml --prune
+conda activate sdyj
 pytest
 ruff check SDYJ_Agents tests
 ```
 
-单元测试使用 fake LLM 与 fake search，不需要真实 API key。
+Conda 是本项目默认开发环境。单元测试使用 fake LLM 与 fake search，不需要真实 API key。
 
 ## Roadmap
 

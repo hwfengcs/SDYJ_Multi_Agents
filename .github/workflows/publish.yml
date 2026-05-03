@@ -25,23 +25,27 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Conda
+        uses: conda-incubator/setup-miniconda@v3
         with:
+          miniforge-version: latest
+          activate-environment: sdyj-build
           python-version: "3.12"
+          channels: conda-forge
+          channel-priority: strict
+          auto-update-conda: true
 
       - name: Install build tooling
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install build
+        shell: bash -el {0}
+        run: conda install -y -c conda-forge python-build twine
 
       - name: Build sdist and wheel
+        shell: bash -el {0}
         run: python -m build
 
       - name: Verify metadata
-        run: |
-          python -m pip install twine
-          python -m twine check dist/*
+        shell: bash -el {0}
+        run: python -m twine check dist/*
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

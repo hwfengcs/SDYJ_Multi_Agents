@@ -46,7 +46,9 @@ gh workflow run publish.yml -f target=testpypi
 After it succeeds, verify on TestPyPI:
 
 ```bash
-pip install --index-url https://test.pypi.org/simple/ \
+conda create -n sdyj-release-test python=3.12 pip
+conda activate sdyj-release-test
+python -m pip install --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
   sdyj-multi-agents
 sdyj --help
@@ -71,11 +73,15 @@ gh release create v0.6.0 \
 ## Local smoke test before tagging
 
 ```bash
-python -m pip install --upgrade build
+conda env update -n sdyj -f environment.yml --prune
+conda activate sdyj
 python -m build
-python -m pip install dist/sdyj_multi_agents-*.whl
+python -m pip install --force-reinstall dist/sdyj_multi_agents-*.whl
 sdyj research "smoke test query" --auto-approve --provider deepseek
 ```
+
+Local development and CI use Conda. `pyproject.toml` remains the source of
+package metadata for PyPI builds and the `sdyj` console entry point.
 
 ## Rollback
 

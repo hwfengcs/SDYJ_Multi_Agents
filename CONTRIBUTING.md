@@ -7,9 +7,13 @@ support.
 ## Development Setup
 
 ```bash
-python -m pip install -e ".[dev]"
+conda env create -f environment.yml
+conda activate sdyj
 copy .env.example .env
 ```
+
+If the environment already exists, run `conda env update -n sdyj -f environment.yml --prune`.
+The repository uses Conda for local development.
 
 Real API keys are only needed for live smoke tests. Unit tests use fake LLM and
 fake search implementations.

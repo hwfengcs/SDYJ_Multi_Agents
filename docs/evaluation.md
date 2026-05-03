@@ -31,7 +31,7 @@ behavior. The operational benchmark guide is now maintained in
      duplicate URL handling, and tool-call reliability.
 
 3. **Live smoke tests**
-   - Opt in with `python main.py eval --live ...`.
+   - Opt in with `sdyj eval --live ...`.
    - Use a real provider for planning and synthesis.
    - Keep canned evidence by default so model behavior can be evaluated without
      search-result drift.
@@ -46,21 +46,21 @@ behavior. The operational benchmark guide is now maintained in
 List scenarios:
 
 ```bash
-python main.py list-scenarios
-python main.py benchmark run --max-scenarios 1 --max-iterations 2
-python main.py benchmark run --fail-under 0.75
+sdyj list-scenarios
+sdyj benchmark run --max-scenarios 1 --max-iterations 2
+sdyj benchmark run --fail-under 0.75
 ```
 
 The legacy command remains supported:
 
 ```bash
-python main.py eval --max-scenarios 1 --max-iterations 2
+sdyj eval --max-scenarios 1 --max-iterations 2
 ```
 
 Run a real DeepSeek eval:
 
 ```bash
-python main.py eval \
+sdyj eval \
   --live \
   --provider deepseek \
   --model deepseek-v4-flash \
@@ -71,7 +71,7 @@ python main.py eval \
 Inspect a run:
 
 ```bash
-python main.py inspect-run <run-id>
+sdyj inspect-run <run-id>
 ```
 
 ## Metrics
@@ -97,7 +97,7 @@ Mode: live DeepSeek model with canned evidence
 Command:
 
 ```bash
-python main.py eval --live --provider deepseek --model deepseek-v4-flash --scenario agent_reliability_hard --max-iterations 2
+sdyj eval --live --provider deepseek --model deepseek-v4-flash --scenario agent_reliability_hard --max-iterations 2
 ```
 
 Result:

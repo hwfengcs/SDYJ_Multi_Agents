@@ -10,10 +10,10 @@ coverage.
 
 ```bash
 # v0.5-compatible baseline: verifier/reflection/refinement/parallel all off
-python main.py benchmark run --max-scenarios 3 --max-iterations 2 --output-dir outputs\phase2_v05
+sdyj benchmark run --max-scenarios 3 --max-iterations 2 --output-dir outputs\phase2_v05
 
 # v0.6 algorithm stack: verifier + reflection + plan refinement + parallel tools
-python main.py benchmark run --max-scenarios 3 --max-iterations 2 --output-dir outputs\phase2_v06 --enable-verify --enable-reflect --enable-refine-plan --enable-parallel-tools
+sdyj benchmark run --max-scenarios 3 --max-iterations 2 --output-dir outputs\phase2_v06 --enable-verify --enable-reflect --enable-refine-plan --enable-parallel-tools
 ```
 
 ## Summary

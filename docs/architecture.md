@@ -111,8 +111,8 @@ contains:
 Use:
 
 ```bash
-python main.py inspect-run
-python main.py inspect-run <run-id>
+sdyj inspect-run
+sdyj inspect-run <run-id>
 ```
 
 ## Evaluation
@@ -122,8 +122,8 @@ default evaluation mode uses canned evidence for reproducibility; `--live`
 switches the Planner/Rapporteur/Coordinator to a real provider such as DeepSeek.
 
 ```bash
-python main.py eval --max-scenarios 1
-python main.py eval --live --provider deepseek --model deepseek-v4-flash --scenario agent_reliability_hard
+sdyj eval --max-scenarios 1
+sdyj eval --live --provider deepseek --model deepseek-v4-flash --scenario agent_reliability_hard
 ```
 
 ## Extension Points

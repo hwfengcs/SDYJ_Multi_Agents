@@ -1111,12 +1111,12 @@ def parse_args(argv: Any) -> argparse.Namespace:
         description="SDYJ 深度研究系统 - 基于 LangGraph 的多智能体研究系统",
         epilog=(
             "示例：\n"
-            "  python main.py research \"Transformer 架构最新进展\"\n"
-            "  python main.py \"Transformer 架构最新进展\"\n"
-            "  python main.py list-models deepseek\n"
-            "  python main.py eval --max-scenarios 1\n"
-            "  python main.py inspect-run\n"
-            "  python main.py config-info"
+            "  sdyj research \"Transformer 架构最新进展\"\n"
+            "  sdyj \"Transformer 架构最新进展\"\n"
+            "  sdyj list-models deepseek\n"
+            "  sdyj eval --max-scenarios 1\n"
+            "  sdyj inspect-run\n"
+            "  sdyj config-info"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

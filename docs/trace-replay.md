@@ -43,25 +43,25 @@ redacted from snapshots.
 Show the latest run:
 
 ```bash
-python main.py inspect-run
+sdyj inspect-run
 ```
 
 Show a specific run with the event timeline:
 
 ```bash
-python main.py inspect-run <run-id> --timeline
+sdyj inspect-run <run-id> --timeline
 ```
 
 Show one event:
 
 ```bash
-python main.py inspect-run <run-id> --timeline --event evt_000012
+sdyj inspect-run <run-id> --timeline --event evt_000012
 ```
 
 List recent run bundles:
 
 ```bash
-python main.py runs list
+sdyj runs list
 ```
 
 ## Replay
@@ -70,14 +70,14 @@ Deterministic replay uses the recorded LLM and tool outputs from Trace v2. It
 does not call real model or search APIs.
 
 ```bash
-python main.py replay <run-id>
+sdyj replay <run-id>
 ```
 
 Replay creates a new run with `mode=replay` and stores its own trace. This makes
 it possible to compare the original and replayed executions:
 
 ```bash
-python main.py diff-runs <original-run-id> <replay-run-id>
+sdyj diff-runs <original-run-id> <replay-run-id>
 ```
 
 Replay also restores v0.6 feature flags from `trace.config` so the recorded

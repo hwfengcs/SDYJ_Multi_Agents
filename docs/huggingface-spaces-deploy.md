@@ -115,10 +115,15 @@ it above the fold.
 ## Local dry run before pushing
 
 ```bash
-pip install -e ".[web]"
+conda env update -n sdyj -f environment.yml --prune
+conda activate sdyj
 streamlit run streamlit_app.py
 # Open http://localhost:8501 — same UI that runs on Spaces.
 ```
+
+Local development uses the Conda environment in `environment.yml`. Hugging Face
+Spaces still reads `requirements.txt` during hosted builds, so that lightweight
+runtime file is intentionally kept for deployment compatibility.
 
 If the local dry run works and the Space build logs come back green, the
 demo is live.

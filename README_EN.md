@@ -41,11 +41,13 @@ Most open-source agent frameworks ship a happy-path workflow and stop there. The
 ## Quick start (60 seconds)
 
 ```bash
-pip install sdyj-multi-agents          # or: pip install -e ".[dev]"
-export DEEPSEEK_API_KEY=sk-...          # cheapest provider for running benchmarks
-export TAVILY_API_KEY=tvly-...
+conda env create -f environment.yml
+conda activate sdyj
+cp .env.example .env                    # Windows PowerShell: copy .env.example .env
 sdyj research "How should RAG agents be evaluated for reliability?"
 ```
+
+Fill `DEEPSEEK_API_KEY` and `TAVILY_API_KEY` in `.env` before running live research. See [docs/conda-setup.md](docs/conda-setup.md) for the full environment guide.
 
 Run without a query to enter the interactive menu:
 
@@ -178,12 +180,13 @@ Sample artifacts: [examples/sample_report.md](examples/sample_report.md) · [exa
 ## Develop
 
 ```bash
-python -m pip install -e ".[dev]"
+conda env update -n sdyj -f environment.yml --prune
+conda activate sdyj
 pytest
 ruff check SDYJ_Agents tests
 ```
 
-Unit tests use fake LLM and fake search implementations, so real API keys are not required.
+Conda is the default development environment. Unit tests use fake LLM and fake search implementations, so real API keys are not required.
 
 ## Roadmap
 
