@@ -19,6 +19,7 @@ def test_offline_evaluation_runs_one_scenario(tmp_path):
     assert result["trace_path"]
     assert result["report_path"]
     assert summary["enable_plan_refinement"] is False
+    assert summary["enable_parallel_tool_execution"] is False
 
 
 def test_evaluation_applies_fail_under(tmp_path):

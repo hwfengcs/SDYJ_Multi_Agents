@@ -63,6 +63,7 @@ class CLIConfig:
     max_revisions: int = DEFAULT_MAX_REVISIONS
     skip_reflection: bool = False
     skip_plan_refinement: bool = False
+    skip_parallel_tool_execution: bool = False
 
 
 # 配置文件路径
@@ -405,6 +406,7 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
                 "skip_verification": config.skip_verification,
                 "max_revisions": config.max_revisions,
                 "enable_plan_refinement": not config.skip_plan_refinement,
+                "enable_parallel_tool_execution": not config.skip_parallel_tool_execution,
             }
         )
 
@@ -427,6 +429,7 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
             mcp_server_url=env_cfg.search.mcp_server_url,
             mcp_api_key=env_cfg.search.mcp_api_key,
             enable_reflection=not config.skip_reflection,
+            enable_parallel_tool_execution=not config.skip_parallel_tool_execution,
         )
         rapporteur = Rapporteur(llm)
         verifier = None if config.skip_verification else Verifier(llm)
@@ -966,6 +969,7 @@ def execute_evaluation(args: argparse.Namespace) -> int:
             max_revisions=args.max_revisions,
             enable_reflection=args.enable_reflect,
             enable_plan_refinement=args.enable_refine_plan,
+            enable_parallel_tool_execution=args.enable_parallel_tools,
         )
 
         table = Table(title="SDYJ Evaluation")
@@ -1069,6 +1073,12 @@ def _add_runtime_options(parser: argparse.ArgumentParser, saved_config: Dict[str
         default=saved_config.get("skip_plan_refinement", False),
         help="跳过 v0.6 mid-flight plan refinement（始终按初始计划执行剩余 task）",
     )
+    parser.add_argument(
+        "--no-parallel-tools",
+        action="store_true",
+        default=saved_config.get("skip_parallel_tool_execution", False),
+        help="跳过 v0.6 task 内并发检索（恢复 query/source 顺序执行）",
+    )
 
 
 def _create_config_from_args(args: argparse.Namespace) -> CLIConfig:
@@ -1088,6 +1098,7 @@ def _create_config_from_args(args: argparse.Namespace) -> CLIConfig:
         max_revisions=getattr(args, "max_revisions", DEFAULT_MAX_REVISIONS),
         skip_reflection=getattr(args, "no_reflect", False),
         skip_plan_refinement=getattr(args, "no_refine_plan", False),
+        skip_parallel_tool_execution=getattr(args, "no_parallel_tools", False),
     )
 
 
@@ -1311,6 +1322,12 @@ def parse_args(argv: Any) -> argparse.Namespace:
             action="store_true",
             default=False,
             help="Enable v0.6 mid-flight plan refinement during eval runs (default off for v0.5-compatible gates).",
+        )
+        parser.add_argument(
+            "--enable-parallel-tools",
+            action="store_true",
+            default=False,
+            help="Enable v0.6 task-level parallel tool execution during eval runs (default off for v0.5-compatible gates).",
         )
         args = parser.parse_args(argv[1:])
         args.command = "eval"

@@ -91,7 +91,14 @@ def _missing_api_key_for(provider: str) -> Optional[str]:
     return env_names[0] if env_names else None
 
 
-def _build_workflow(provider: str, model: str, skip_verification: bool, enable_reflection: bool, enable_plan_refinement: bool) -> tuple[ResearchWorkflow, Dict[str, Any]]:
+def _build_workflow(
+    provider: str,
+    model: str,
+    skip_verification: bool,
+    enable_reflection: bool,
+    enable_plan_refinement: bool,
+    enable_parallel_tool_execution: bool,
+) -> tuple[ResearchWorkflow, Dict[str, Any]]:
     """Build a fresh workflow + trace for one run.
 
     A new workflow per run keeps the LangGraph checkpointer simple and avoids
@@ -122,6 +129,7 @@ def _build_workflow(provider: str, model: str, skip_verification: bool, enable_r
         mcp_server_url=env_cfg.search.mcp_server_url,
         mcp_api_key=env_cfg.search.mcp_api_key,
         enable_reflection=enable_reflection,
+        enable_parallel_tool_execution=enable_parallel_tool_execution,
     )
     rapporteur = Rapporteur(llm)
     verifier = None if skip_verification else Verifier(llm)
@@ -140,6 +148,7 @@ def _run_research(
     max_revisions: int,
     enable_reflection: bool,
     enable_plan_refinement: bool,
+    enable_parallel_tool_execution: bool,
 ) -> Dict[str, Any]:
     """Run the full research workflow and persist the trace bundle.
 
@@ -148,7 +157,14 @@ def _run_research(
     experience but is left as a follow-up — the trace timeline below
     reconstructs the run order, so users can see exactly what happened.
     """
-    workflow, trace = _build_workflow(provider, model, skip_verification, enable_reflection, enable_plan_refinement)
+    workflow, trace = _build_workflow(
+        provider,
+        model,
+        skip_verification,
+        enable_reflection,
+        enable_plan_refinement,
+        enable_parallel_tool_execution,
+    )
     trace["query"] = query
     trace.setdefault("config", {}).update(
         {
@@ -156,6 +172,7 @@ def _run_research(
             "skip_verification": skip_verification,
             "max_revisions": max_revisions,
             "enable_plan_refinement": enable_plan_refinement,
+            "enable_parallel_tool_execution": enable_parallel_tool_execution,
         }
     )
 
@@ -270,6 +287,15 @@ def main() -> None:
                 "the evidence revealed. One-shot per run."
             ),
         )
+        enable_parallel_tool_execution = st.toggle(
+            "Parallel tool execution (v0.6)",
+            value=True,
+            help=(
+                "When on, each task runs its query/source lookups concurrently "
+                "with a bounded concurrency limit. Off = sequential retrieval "
+                "(v0.5 behavior)."
+            ),
+        )
 
         st.divider()
         missing_key = _missing_api_key_for(provider)
@@ -346,6 +372,7 @@ def main() -> None:
                         max_revisions=max_revisions,
                         enable_reflection=enable_reflection,
                         enable_plan_refinement=enable_plan_refinement,
+                        enable_parallel_tool_execution=enable_parallel_tool_execution,
                     )
                     st.session_state["last_result"] = result
                     status.update(

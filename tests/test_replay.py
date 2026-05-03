@@ -12,6 +12,21 @@ class CapturingPlanner:
         self.__class__.instances.append(self)
 
 
+class CapturingResearcher:
+    instances = []
+
+    def __init__(
+        self,
+        llm,
+        enable_reflection=True,
+        enable_parallel_tool_execution=True,
+    ):
+        self.llm = llm
+        self.enable_reflection = enable_reflection
+        self.enable_parallel_tool_execution = enable_parallel_tool_execution
+        self.__class__.instances.append(self)
+
+
 class FakeWorkflow:
     def __init__(self, coordinator, planner, researcher, rapporteur, verifier):
         self.planner = planner
@@ -42,7 +57,9 @@ def _source_trace(config=None):
 
 def _patch_replay_runtime(monkeypatch):
     CapturingPlanner.instances = []
+    CapturingResearcher.instances = []
     monkeypatch.setattr(replay_module, "Planner", CapturingPlanner)
+    monkeypatch.setattr(replay_module, "Researcher", CapturingResearcher)
     monkeypatch.setattr(replay_module, "ResearchWorkflow", FakeWorkflow)
     monkeypatch.setattr(
         replay_module,
@@ -58,6 +75,8 @@ def test_replay_defaults_plan_refinement_off_for_legacy_traces(monkeypatch, tmp_
 
     assert CapturingPlanner.instances[-1].enable_plan_refinement is False
     assert result["trace"]["config"]["enable_plan_refinement"] is False
+    assert CapturingResearcher.instances[-1].enable_parallel_tool_execution is False
+    assert result["trace"]["config"]["enable_parallel_tool_execution"] is False
 
 
 def test_replay_restores_plan_refinement_flag_from_source_trace(monkeypatch, tmp_path):
@@ -70,3 +89,15 @@ def test_replay_restores_plan_refinement_flag_from_source_trace(monkeypatch, tmp
 
     assert CapturingPlanner.instances[-1].enable_plan_refinement is True
     assert result["trace"]["config"]["enable_plan_refinement"] is True
+
+
+def test_replay_restores_parallel_tool_execution_flag_from_source_trace(monkeypatch, tmp_path):
+    _patch_replay_runtime(monkeypatch)
+
+    result = replay_module.run_deterministic_replay(
+        _source_trace({"enable_parallel_tool_execution": True}),
+        output_dir=tmp_path,
+    )
+
+    assert CapturingResearcher.instances[-1].enable_parallel_tool_execution is True
+    assert result["trace"]["config"]["enable_parallel_tool_execution"] is True

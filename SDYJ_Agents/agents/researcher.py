@@ -5,6 +5,7 @@ This module implements the Researcher agent, which is responsible for
 executing information retrieval tasks.
 """
 
+import asyncio
 import json
 import time
 from typing import Any, Dict, List, Optional
@@ -16,6 +17,11 @@ from ..llm.base import BaseLLM
 from ..prompts.loader import PromptLoader
 from ..utils.evidence import merge_evidence_items, normalize_search_batch
 from ..utils.tracing import record_tool_call, record_trace_event
+from ..workflow.parallel_executor import (
+    SearchJobResult,
+    build_search_jobs,
+    run_search_jobs_sync,
+)
 
 
 # Below this average relevance score we treat a batch as "weak" and consider
@@ -47,6 +53,8 @@ class Researcher:
         mcp_server_url: Optional[str] = None,
         mcp_api_key: Optional[str] = None,
         enable_reflection: bool = True,
+        enable_parallel_tool_execution: bool = True,
+        parallel_concurrency_limit: int = 4,
     ):
         """
         Initialize the Researcher.
@@ -61,6 +69,11 @@ class Researcher:
                 and asks the LLM to rewrite weak queries before giving up.
                 Set to False to restore v0.5 single-pass behavior — useful
                 for the v0.5-vs-v0.6 ablation in evaluation runs.
+            enable_parallel_tool_execution: When True (the default in v0.6+),
+                run the query/source lookups inside one task concurrently.
+                Set to False to restore v0.5-style sequential retrieval.
+            parallel_concurrency_limit: Maximum number of in-flight tool calls
+                inside one task when parallel execution is enabled.
         """
         self.llm = llm
         self.tavily = TavilySearch(tavily_api_key) if tavily_api_key else None
@@ -68,6 +81,8 @@ class Researcher:
         self.mcp = MCPClient(mcp_server_url, mcp_api_key) if mcp_server_url else None
         self.prompt_loader = PromptLoader()
         self.enable_reflection = enable_reflection
+        self.enable_parallel_tool_execution = enable_parallel_tool_execution
+        self.parallel_concurrency_limit = max(1, int(parallel_concurrency_limit or 1))
 
     def execute_task(self, state: ResearchState, task: SubTask) -> ResearchState:
         """
@@ -150,37 +165,122 @@ class Researcher:
         Pulled out as a helper so the first pass and a reflection-driven
         retry share the exact same trace-recording / latency-measuring path.
         """
+        jobs = build_search_jobs(queries, sources)
+        if (
+            self.enable_parallel_tool_execution
+            and self.parallel_concurrency_limit > 1
+            and len(jobs) > 1
+        ):
+            return self._run_queries_parallel(state, task, queries, sources)
+        return self._run_queries_sequential(state, task, queries, sources)
+
+    def _run_queries_sequential(
+        self,
+        state: ResearchState,
+        task: SubTask,
+        queries: List[str],
+        sources: List[str],
+    ) -> List[Dict[str, Any]]:
+        """Run search jobs one at a time, preserving the legacy v0.5 order."""
         results: List[Dict[str, Any]] = []
         for query in queries:
             for source in sources:
                 started = time.perf_counter()
                 result = self._search(query, source)
                 latency_ms = int(round((time.perf_counter() - started) * 1000))
-                if result:
-                    result['task_id'] = task['task_id']
-                    result['latency_ms'] = latency_ms
-                    results.append(result)
-                    record_tool_call(
-                        state.get('trace'),
-                        source=result.get('source', source),
-                        query=query,
-                        task_id=task.get('task_id'),
-                        latency_ms=latency_ms,
-                        result_count=len(result.get('results', [])),
-                        error=result.get('error'),
-                        result=result,
-                    )
-                else:
-                    record_tool_call(
-                        state.get('trace'),
-                        source=source,
-                        query=query,
-                        task_id=task.get('task_id'),
-                        latency_ms=latency_ms,
-                        result_count=0,
-                        error="source unavailable or unsupported",
-                    )
+                self._record_search_outcome(
+                    state=state,
+                    task=task,
+                    query=query,
+                    source=source,
+                    result=result,
+                    latency_ms=latency_ms,
+                    results=results,
+                )
         return results
+
+    def _run_queries_parallel(
+        self,
+        state: ResearchState,
+        task: SubTask,
+        queries: List[str],
+        sources: List[str],
+    ) -> List[Dict[str, Any]]:
+        """Run search jobs concurrently and record each tool call separately."""
+        job_results = run_search_jobs_sync(
+            build_search_jobs(queries, sources),
+            self._search_async,
+            concurrency_limit=self.parallel_concurrency_limit,
+        )
+        results: List[Dict[str, Any]] = []
+        for job_result in job_results:
+            self._record_parallel_search_outcome(state, task, job_result, results)
+        return results
+
+    def _record_parallel_search_outcome(
+        self,
+        state: ResearchState,
+        task: SubTask,
+        job_result: SearchJobResult,
+        results: List[Dict[str, Any]],
+    ) -> None:
+        self._record_search_outcome(
+            state=state,
+            task=task,
+            query=job_result.job.query,
+            source=job_result.job.source,
+            result=job_result.result,
+            latency_ms=job_result.latency_ms,
+            results=results,
+        )
+
+    def _record_search_outcome(
+        self,
+        state: ResearchState,
+        task: SubTask,
+        query: str,
+        source: str,
+        result: Optional[SearchResult],
+        latency_ms: int,
+        results: List[Dict[str, Any]],
+    ) -> None:
+        """Normalize state and trace updates for one tool call outcome."""
+        if result:
+            result['task_id'] = task['task_id']
+            result['latency_ms'] = latency_ms
+            results.append(result)
+            record_tool_call(
+                state.get('trace'),
+                source=result.get('source', source),
+                query=query,
+                task_id=task.get('task_id'),
+                latency_ms=latency_ms,
+                result_count=len(result.get('results', [])),
+                error=result.get('error'),
+                result=result,
+            )
+        else:
+            record_tool_call(
+                state.get('trace'),
+                source=source,
+                query=query,
+                task_id=task.get('task_id'),
+                latency_ms=latency_ms,
+                result_count=0,
+                error="source unavailable or unsupported",
+            )
+
+    async def _search_async(self, query: str, source: str) -> Optional[SearchResult]:
+        """Async search adapter used by the parallel executor."""
+        source = source.lower().strip()
+        if source == 'mcp' and self.mcp:
+            result = self.mcp.search(query)
+            if asyncio.iscoroutine(result):
+                return await result
+            return result
+        # Preserve the legacy _search extension point for sync tools and tests,
+        # while keeping Tavily/arXiv calls off the event loop via to_thread.
+        return await asyncio.to_thread(self._search, query, source)
 
     @staticmethod
     def _should_reflect(batches: List[Dict[str, Any]]) -> bool:

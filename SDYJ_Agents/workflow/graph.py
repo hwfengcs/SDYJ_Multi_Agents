@@ -207,6 +207,7 @@ class ResearchWorkflow:
                     "output_format": output_format,
                     "skip_verification": skip_verification if skip_verification is not None else (self.verifier is None),
                     "max_revisions": max_revisions if max_revisions is not None else DEFAULT_MAX_REVISIONS,
+                    "enable_parallel_tool_execution": getattr(self.researcher, "enable_parallel_tool_execution", True),
                 }
             )
             initial_state['trace'] = trace
@@ -255,6 +256,7 @@ class ResearchWorkflow:
                     "output_format": output_format,
                     "skip_verification": skip_verification if skip_verification is not None else (self.verifier is None),
                     "max_revisions": max_revisions if max_revisions is not None else DEFAULT_MAX_REVISIONS,
+                    "enable_parallel_tool_execution": getattr(self.researcher, "enable_parallel_tool_execution", True),
                 }
             )
             initial_state['trace'] = trace
@@ -305,6 +307,7 @@ class ResearchWorkflow:
                     "output_format": output_format,
                     "skip_verification": skip_verification if skip_verification is not None else (self.verifier is None),
                     "max_revisions": max_revisions if max_revisions is not None else DEFAULT_MAX_REVISIONS,
+                    "enable_parallel_tool_execution": getattr(self.researcher, "enable_parallel_tool_execution", True),
                 }
             )
             initial_state['trace'] = trace

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterator
@@ -55,29 +56,43 @@ class ReplaySearchTool:
     recorded_calls: list[Dict[str, Any]]
 
     def __post_init__(self) -> None:
-        self.index = 0
+        self._consumed: set[int] = set()
+        self._lock = threading.Lock()
 
     def search(self, query: str, **kwargs) -> Dict[str, Any]:
-        while self.index < len(self.recorded_calls):
-            call = self.recorded_calls[self.index]
-            self.index += 1
-            if str(call.get("source", "")).lower() != self.source.lower():
-                continue
-            result = copy.deepcopy(call.get("result") or {})
-            if not result:
-                result = {
-                    "query": query,
-                    "source": self.source,
-                    "results": [],
-                    "error": "recorded tool result missing",
-                }
-            return result
+        with self._lock:
+            call = self._take_recorded_call(query, require_query=True)
+            if call is None:
+                call = self._take_recorded_call(query, require_query=False)
+            if call is not None:
+                result = copy.deepcopy(call.get("result") or {})
+                if not result:
+                    result = {
+                        "query": query,
+                        "source": self.source,
+                        "results": [],
+                        "error": "recorded tool result missing",
+                    }
+                return result
         return {
             "query": query,
             "source": self.source,
             "results": [],
             "error": f"ReplaySearchTool exhausted recorded calls for {self.source}",
         }
+
+    def _take_recorded_call(self, query: str, require_query: bool) -> Dict[str, Any] | None:
+        query_key = str(query).strip().lower()
+        for index, call in enumerate(self.recorded_calls):
+            if index in self._consumed:
+                continue
+            if str(call.get("source", "")).lower() != self.source.lower():
+                continue
+            if require_query and str(call.get("query", "")).strip().lower() != query_key:
+                continue
+            self._consumed.add(index)
+            return call
+        return None
 
 
 def can_deterministically_replay(trace: Dict[str, Any]) -> tuple[bool, str]:
@@ -126,12 +141,16 @@ def run_deterministic_replay(
     source_config = source_trace.get("config") or {}
     enable_reflection_replay = bool(source_config.get("enable_reflection", False))
     enable_plan_refinement_replay = bool(source_config.get("enable_plan_refinement", False))
+    enable_parallel_tool_execution_replay = bool(
+        source_config.get("enable_parallel_tool_execution", False)
+    )
     skip_verification = bool(source_config.get("skip_verification", True))
     max_revisions = int(source_config.get("max_revisions") or 0)
     replay_trace.setdefault("config", {}).update(
         {
             "enable_reflection": enable_reflection_replay,
             "enable_plan_refinement": enable_plan_refinement_replay,
+            "enable_parallel_tool_execution": enable_parallel_tool_execution_replay,
             "skip_verification": skip_verification,
             "max_revisions": max_revisions,
         }
@@ -139,7 +158,11 @@ def run_deterministic_replay(
 
     coordinator = Coordinator(llm)
     planner = Planner(llm, enable_plan_refinement=enable_plan_refinement_replay)
-    researcher = Researcher(llm, enable_reflection=enable_reflection_replay)
+    researcher = Researcher(
+        llm,
+        enable_reflection=enable_reflection_replay,
+        enable_parallel_tool_execution=enable_parallel_tool_execution_replay,
+    )
     tool_calls = cache.get("tool_calls", [])
     researcher.tavily = ReplaySearchTool("tavily", tool_calls)
     researcher.arxiv = ReplaySearchTool("arxiv", tool_calls)

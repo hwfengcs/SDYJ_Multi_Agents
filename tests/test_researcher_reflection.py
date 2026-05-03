@@ -332,3 +332,48 @@ def test_execute_task_handles_reflection_llm_failure_gracefully():
     researcher.execute_task(state, task)
     assert task.get("_reflected") is True
     assert search.queries == ["only query"]  # no retry happened
+
+
+def test_reflection_retry_runs_rewritten_query_through_parallel_sources():
+    tavily = _ScriptedSearch(
+        "tavily",
+        [
+            {"results": [{"title": "noise", "url": "https://x", "relevance_score": 0.1}]},
+            {"results": [{"title": "good", "url": "https://y", "relevance_score": 0.95}]},
+        ],
+    )
+    arxiv = _ScriptedSearch(
+        "arxiv",
+        [
+            {"results": [{"title": "paper", "url": "https://arxiv.org/a", "relevance_score": 0.1}]},
+            {"results": [{"title": "better paper", "url": "https://arxiv.org/b", "relevance_score": 0.95}]},
+        ],
+    )
+    llm = _ScriptedLLM(
+        [
+            json.dumps(
+                {
+                    "diagnosis": "too vague",
+                    "rewritten_queries": ["agent observability survey"],
+                }
+            )
+        ]
+    )
+
+    researcher = Researcher(llm)
+    researcher.tavily = tavily
+    researcher.arxiv = arxiv
+    researcher.mcp = None
+
+    state = _state([_task(["vague agent traces"], ["tavily", "arxiv"])])
+    task = state["research_plan"]["sub_tasks"][0]
+
+    researcher.execute_task(state, task)
+
+    assert tavily.queries == ["vague agent traces", "agent observability survey"]
+    assert arxiv.queries == ["vague agent traces", "agent observability survey"]
+    assert task.get("_reflected") is True
+    assert task["search_queries"] == ["vague agent traces", "agent observability survey"]
+    assert len(state["research_results"]) == 4
+    assert len(state["trace"]["tool_calls"]) == 4
+    assert state["trace"]["metrics"]["reflection_count"] == 1
