@@ -3,6 +3,7 @@ import pytest
 from SDYJ_Agents import __version__
 from SDYJ_Agents.cli.main import (
     _create_config_from_args,
+    _configure_stream_for_safe_console,
     collect_doctor_checks,
     get_api_key_for_provider,
     parse_args,
@@ -82,6 +83,21 @@ def test_version_flag_matches_package_version(capsys):
 
     assert exc_info.value.code == 0
     assert __version__ in capsys.readouterr().out
+
+
+def test_configure_stream_uses_replacement_errors():
+    class DummyStream:
+        def __init__(self):
+            self.kwargs = None
+
+        def reconfigure(self, **kwargs):
+            self.kwargs = kwargs
+
+    stream = DummyStream()
+
+    _configure_stream_for_safe_console(stream)
+
+    assert stream.kwargs == {"errors": "replace"}
 
 
 def test_doctor_reports_missing_required_api_key(monkeypatch):

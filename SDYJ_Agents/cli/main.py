@@ -49,6 +49,21 @@ from ..agents.rapporteur import Rapporteur
 from ..agents.verifier import DEFAULT_MAX_REVISIONS, Verifier
 from ..workflow.graph import ResearchWorkflow
 
+def _configure_stream_for_safe_console(stream: Any) -> None:
+    """Prefer replacement over crashing when a Windows code page cannot encode output."""
+    reconfigure = getattr(stream, "reconfigure", None)
+    if not callable(reconfigure):
+        return
+    try:
+        reconfigure(errors="replace")
+    except (TypeError, ValueError):
+        # Some redirected/captured streams do not allow reconfiguration.
+        return
+
+
+_configure_stream_for_safe_console(sys.stdout)
+_configure_stream_for_safe_console(sys.stderr)
+
 console = Console()
 error_console = Console(stderr=True)
 
@@ -674,15 +689,8 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
         if current_state and current_state.get('final_report'):
             report = current_state['final_report']
 
-            # Display report
-            console.print("\n")
-            console.print(Panel(
-                Markdown(report),
-                title="研究报告",
-                border_style="green"
-            ))
-
-            # Save report
+            # Save durable artifacts before rendering the report to stdout; terminal
+            # encoding issues should not prevent trace/replay files from being written.
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             output_dir = Path(config.output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -708,6 +716,14 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
             )
             if trace_path:
                 console.print(f"[green][OK] 运行轨迹已保存至：{trace_path}[/green]")
+
+            # Display report
+            console.print("\n")
+            console.print(Panel(
+                Markdown(report),
+                title="研究报告",
+                border_style="green"
+            ))
 
         elif current_state and current_state.get('simple_response'):
             # Simple query was handled, no need to show error
