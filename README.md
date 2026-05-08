@@ -10,6 +10,11 @@
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/hwfengcs/SDYJ_Multi_Agents?style=social)](https://github.com/hwfengcs/SDYJ_Multi_Agents)
 
+<!-- Hosted demo badges are prepared but hidden until the URLs are verified:
+[![Open in Spaces](https://img.shields.io/badge/Spaces-Try_demo-blue)](https://huggingface.co/spaces/<owner>/sdyj-multi-agents)
+[![Trace Viewer](https://img.shields.io/badge/GitHub_Pages-Trace_Viewer-blue)](https://hwfengcs.github.io/SDYJ_Multi_Agents/trace-viewer-demo.html)
+-->
+
 > SDYJ 把开放式研究请求转换成一个可控的 LangGraph 工作流：意图识别 → 计划生成 → 人工审核 → 多源检索 → 证据驱动的报告合成。每次运行都写入 Trace v2 事件时间线、可 deterministic replay、记录每次 LLM 调用的 token 与美元成本，并且通过 benchmark 阈值 gate 把质量回归挡在 CI 之外。目标是 **agent 工程化运营**，不是又一个 LangGraph hello-world demo。
 
 ## 为什么是 SDYJ

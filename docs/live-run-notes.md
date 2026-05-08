@@ -179,3 +179,53 @@ Observed results:
 Follow-up:
 
 - Rerun the same Docker build and CLI smoke on a Docker-enabled host.
+
+## 2026-05-08 - Hosted release readiness follow-up
+
+- Status: local release/hosting readiness improved; external live smoke remains
+  blocked by missing Tavily.
+- `.env` check: `TAVILY_API_KEY=missing`. No secret value was printed or
+  recorded.
+
+Validation:
+
+```bash
+sdyj doctor --provider deepseek
+python -m pytest
+python -m ruff check SDYJ_Agents tests examples
+python -m pytest tests/test_deploy_readiness.py tests/test_trace_viewer.py tests/test_publish_workflow.py tests/test_docker_assets.py tests/test_hf_entrypoint.py tests/test_web_smoke.py
+python -m ruff check tests/test_deploy_readiness.py tests/test_trace_viewer.py tests/test_publish_workflow.py tests/test_docker_assets.py tests/test_hf_entrypoint.py tests/test_web_smoke.py
+```
+
+Observed results:
+
+- `sdyj doctor --provider deepseek`: DeepSeek key present; Tavily missing; MCP
+  source not configured.
+- `python -m pytest`: `121 passed, 1 xfailed`.
+- `python -m ruff check SDYJ_Agents tests examples`: all checks passed.
+- Deploy readiness targeted tests: `25 passed, 1 xfailed`; targeted ruff passed.
+
+Local release-readiness changes:
+
+- Added `docs/pages-deploy.md` with the GitHub Pages settings checklist,
+  unverified URL placeholders, and public Trace Viewer verification criteria.
+- Added hidden README / README_EN hosted-demo badge placeholders so badges are
+  ready but not exposed before real URLs are verified.
+- Added `docs/ghcr.md` and a manual-only `.github/workflows/ghcr.yml` Docker
+  image workflow. The workflow builds by default and pushes only when a
+  maintainer explicitly runs it with `publish=true`.
+- Added a PyPI target/tag gate to `publish.yml`, requiring PyPI publishing to
+  run from the exact `v<pyproject version>` tag while still allowing TestPyPI
+  branch-based alpha smoke checks.
+- Hardened PyPI workflow behavior so GitHub Releases marked as prerelease do
+  not publish to PyPI, and release smoke now includes hosted/Pages/Docker
+  static readiness tests.
+
+External blockers:
+
+- Full DeepSeek + Tavily + arXiv live research remains blocked until a usable
+  `TAVILY_API_KEY` is configured.
+- GitHub Pages and Hugging Face Spaces still require platform-side enablement
+  and verified public URLs before badges should be unhidden.
+- GHCR image publishing still requires an explicit manual workflow run with
+  maintainer approval; no image was pushed in this local batch.

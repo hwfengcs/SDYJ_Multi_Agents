@@ -36,3 +36,27 @@ def test_huggingface_space_readme_template_is_streamlit():
     assert "sdk: streamlit" in content
     assert "app_file: app.py" in content
     assert "SDYJ Multi Agents" in content
+
+
+def test_huggingface_requirements_include_runtime_dependencies():
+    root = Path(__file__).resolve().parents[1]
+    requirements = (root / "requirements.txt").read_text(encoding="utf-8")
+
+    required = [
+        "langgraph",
+        "openai",
+        "anthropic",
+        "google-genai",
+        "tavily-python",
+        "arxiv",
+        "rich",
+        "streamlit",
+        "httpx",
+        "requests",
+        "pydantic",
+        "python-dotenv",
+        "jinja2",
+    ]
+
+    for package in required:
+        assert package in requirements

@@ -10,6 +10,11 @@ English | [中文](README.md)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/hwfengcs/SDYJ_Multi_Agents?style=social)](https://github.com/hwfengcs/SDYJ_Multi_Agents)
 
+<!-- Hosted demo badges are prepared but hidden until the URLs are verified:
+[![Open in Spaces](https://img.shields.io/badge/Spaces-Try_demo-blue)](https://huggingface.co/spaces/<owner>/sdyj-multi-agents)
+[![Trace Viewer](https://img.shields.io/badge/GitHub_Pages-Trace_Viewer-blue)](https://hwfengcs.github.io/SDYJ_Multi_Agents/trace-viewer-demo.html)
+-->
+
 > SDYJ turns an open-ended research request into a controllable LangGraph workflow — plan, human review, multi-source retrieval, evidence-grounded synthesis — with a Trace v2 event timeline, deterministic replay, per-call cost tracking, and benchmark-gated CI built in. The goal is **agent operations**, not another LangGraph hello-world demo.
 
 ## Why SDYJ

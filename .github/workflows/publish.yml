@@ -35,18 +35,62 @@ jobs:
           channel-priority: strict
           auto-update-conda: true
 
+      - name: Validate publish target
+        shell: bash -el {0}
+        env:
+          PUBLISH_TARGET: ${{ github.event.inputs.target || 'pypi' }}
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+
+          with open("pyproject.toml", "rb") as handle:
+              version = tomllib.load(handle)["project"]["version"]
+
+          target = os.environ["PUBLISH_TARGET"]
+          event_name = os.environ["GITHUB_EVENT_NAME"]
+          ref_type = os.environ.get("GITHUB_REF_TYPE", "")
+          ref_name = os.environ.get("GITHUB_REF_NAME", "")
+
+          print(f"Publish target: {target}")
+          print(f"Package version: {version}")
+
+          if target not in {"testpypi", "pypi"}:
+              raise SystemExit(f"Unsupported publish target: {target}")
+
+          if target == "pypi" or event_name == "release":
+              expected_tag = f"v{version}"
+              if ref_type != "tag" or ref_name != expected_tag:
+                  raise SystemExit(
+                      "PyPI publishing must run from the exact package tag "
+                      f"{expected_tag}; got {ref_type or 'unknown'} {ref_name or 'unknown'}."
+                  )
+
+          if target == "testpypi":
+              print("TestPyPI target may run from a branch for pre-release smoke.")
+          PY
+
       - name: Install build tooling
         shell: bash -el {0}
         run: conda install -y -c conda-forge python-build twine
 
       - name: Install project for release smoke tests
         shell: bash -el {0}
-        run: python -m pip install -e ".[dev]"
+        run: python -m pip install -e ".[dev,web]"
 
       - name: Run release smoke tests
         shell: bash -el {0}
         run: |
-          python -m pytest tests/test_version.py tests/test_package_artifacts.py tests/test_external_benchmark.py tests/test_cli.py
+          python -m pytest \
+            tests/test_version.py \
+            tests/test_package_artifacts.py \
+            tests/test_external_benchmark.py \
+            tests/test_cli.py \
+            tests/test_trace_viewer.py \
+            tests/test_hf_entrypoint.py \
+            tests/test_docker_assets.py \
+            tests/test_deploy_readiness.py \
+            tests/test_publish_workflow.py
           python -m ruff check SDYJ_Agents tests examples
 
       - name: Build sdist and wheel
@@ -112,7 +156,7 @@ jobs:
 
   publish-pypi:
     name: Publish to PyPI
-    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
+    if: (github.event_name == 'release' && !github.event.release.prerelease) || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
     needs: build
     runs-on: ubuntu-latest
     environment:

@@ -106,6 +106,31 @@ edit `README.md` and `README_EN.md` to add a badge near the top:
 That badge is the single highest-conversion element for new visitors — keep
 it above the fold.
 
+The root README files already contain a hidden placeholder badge comment. Keep
+it hidden until the real Space URL has been opened, a demo query has completed,
+and the report / evidence / trace / LLM cost tabs have rendered. If the Space
+build is still failing or secrets are missing, record the blocker in
+`docs/live-run-notes.md` instead of exposing a dead badge.
+
+## Pre-deploy checklist
+
+Run these before pushing to the Space repo:
+
+```bash
+python -m pytest tests/test_hf_entrypoint.py tests/test_web_smoke.py tests/test_deploy_readiness.py
+python -m ruff check tests/test_hf_entrypoint.py tests/test_web_smoke.py tests/test_deploy_readiness.py
+sdyj doctor --provider deepseek
+```
+
+Expected local state:
+
+- root `app.py` imports `SDYJ_Agents.web.app.main`;
+- `requirements.txt` includes Streamlit for the HF build environment;
+- Space README frontmatter is copied to the Space repo root as `README.md`;
+- `DEEPSEEK_API_KEY` and `TAVILY_API_KEY` are configured as HF secrets, not
+  variables;
+- the README badge remains hidden until the public URL is verified.
+
 ## Cost notes
 
 - The app prints per-call token + USD cost in the **LLM cost** tab. With

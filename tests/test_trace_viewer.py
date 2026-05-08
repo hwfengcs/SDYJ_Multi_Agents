@@ -1,5 +1,6 @@
 from html.parser import HTMLParser
 from pathlib import Path
+import shutil
 from urllib.parse import urlparse
 
 
@@ -67,6 +68,36 @@ def test_docs_index_local_links_exist_in_pages_site():
         if parsed.scheme or parsed.netloc or parsed.path.startswith("#"):
             continue
         target = (docs_dir / parsed.path).resolve()
+        if not target.exists():
+            missing.append(href)
+
+    assert not missing
+
+
+def test_pages_artifact_layout_matches_workflow_copy(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    docs_dir = root / "docs"
+    site_dir = tmp_path / "_site"
+    viewer_target = site_dir / "SDYJ_Agents" / "web" / "trace_viewer.html"
+
+    shutil.copytree(docs_dir, site_dir)
+    viewer_target.parent.mkdir(parents=True)
+    shutil.copy2(root / "SDYJ_Agents" / "web" / "trace_viewer.html", viewer_target)
+
+    assert (site_dir / "index.html").is_file()
+    assert (site_dir / "trace-viewer-demo.html").is_file()
+    assert viewer_target.is_file()
+
+    html = (site_dir / "index.html").read_text(encoding="utf-8")
+    parser = _HrefParser()
+    parser.feed(html)
+
+    missing = []
+    for href in parser.hrefs:
+        parsed = urlparse(href)
+        if parsed.scheme or parsed.netloc or parsed.path.startswith("#"):
+            continue
+        target = (site_dir / parsed.path).resolve()
         if not target.exists():
             missing.append(href)
 

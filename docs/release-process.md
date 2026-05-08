@@ -29,6 +29,22 @@ In the repo, go to **Settings → Environments**, create two environments named
 `testpypi` and `pypi`. Optional but recommended: require manual approval before
 the `pypi` environment runs, so a release cannot be pushed to PyPI by accident.
 
+### Workflow safety gates
+
+`.github/workflows/publish.yml` performs local release gates before any upload:
+
+- validates the requested target is only `testpypi` or `pypi`;
+- allows TestPyPI dry publishing from a branch for alpha smoke checks;
+- skips PyPI publishing for GitHub Releases marked as prerelease;
+- requires PyPI publishing to run from the exact tag that matches
+  `pyproject.toml`, for example `v0.6.0a1` when the package version is
+  `0.6.0a1`;
+- builds the sdist and wheel, runs `twine check`, and installs the built wheel
+  in a clean virtual environment before publishing.
+
+These gates do not replace Trusted Publisher setup or GitHub environment
+approval; they catch local release mistakes earlier in the workflow.
+
 ## Cutting a release
 
 ### Pre-release (alpha / beta) → TestPyPI
@@ -55,6 +71,10 @@ sdyj --help
 ```
 
 ### Stable release → PyPI
+
+Do not use a GitHub Release marked **This is a pre-release** for PyPI. The
+workflow intentionally skips PyPI publishing for prerelease events; alpha and
+beta validation should go through the manual TestPyPI target first.
 
 ```bash
 # 1. Bump version to a stable number (e.g. 0.6.0)
