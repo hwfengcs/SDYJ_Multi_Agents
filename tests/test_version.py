@@ -18,3 +18,11 @@ def test_manifest_includes_deployment_and_fixture_files():
     assert "include app.py" in content
     assert "recursive-include docs *" in content
     assert "benchmarks/fixtures *.jsonl" in content
+
+
+def test_pyproject_uses_modern_license_metadata():
+    pyproject_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    metadata = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+
+    assert metadata["project"]["license"] == "MIT"
+    assert "License :: OSI Approved :: MIT License" not in metadata["project"]["classifiers"]

@@ -8,7 +8,7 @@ version = "0.6.0a1"
 description = "A self-verifying, replayable, benchmarkable LangGraph multi-agent research framework with evidence-grounded reports, cost tracking, and Trace v2 observability."
 readme = "README_EN.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
 authors = [
   { name = "hwfengcs" }
 ]
@@ -27,7 +27,6 @@ keywords = [
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
