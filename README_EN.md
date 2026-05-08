@@ -120,9 +120,13 @@ The full v0.6 plan lives in [`docs/release-notes/v0.6.md`](docs/release-notes/v0
 
 The locally verifiable release work is mostly closed down:
 
-- `python -m pytest`: `134 passed, 1 xfailed`.
+- `python -m pytest`: `140 passed, 1 xfailed`.
 - `python -m ruff check SDYJ_Agents tests examples`: passed.
 - `python -m build` and `python -m twine check dist/*`: passed.
+- `sdyj release-check` / `python scripts/release_readiness.py` now bundles
+  doctor, pytest, ruff, build, twine, benchmark, and MCP local gates into one
+  no-publish preflight. External gaps are reported as blockers without printing
+  secret values.
 - GitHub Pages, Hugging Face Spaces, TestPyPI/PyPI, Docker, and GHCR now have
   local docs, workflows, or static gates. Real public URLs, packages, and
   images still require platform-side setup.

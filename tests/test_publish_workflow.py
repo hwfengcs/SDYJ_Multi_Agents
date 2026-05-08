@@ -27,6 +27,7 @@ def test_publish_workflow_validates_built_wheel_install():
 def test_release_process_documents_clean_wheel_smoke():
     content = (ROOT / "docs" / "release-process.md").read_text(encoding="utf-8")
 
+    assert "sdyj release-check" in content
     assert "clean" in content
     assert "wheel-install smoke" in content
     assert 'python -m pip install "dist/<built-wheel>.whl[all]"' in content

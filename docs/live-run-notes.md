@@ -351,3 +351,56 @@ Remaining blockers:
 - Hugging Face Spaces, GitHub Pages, GHCR, TestPyPI, and PyPI still require
   platform-side setup or manual workflow execution before public URLs/packages
   can be claimed.
+
+## 2026-05-08 - Consolidated release-check preflight
+
+- Status: pass for all required local gates; external blockers remain honest.
+- Command:
+
+```bash
+sdyj release-check --provider deepseek --output-dir outputs\release_readiness
+```
+
+Observed results:
+
+- `doctor`: pass; DeepSeek key present, Tavily missing, MCP source not configured.
+- `pytest`: `140 passed, 1 xfailed`.
+- `ruff`: all checks passed.
+- Synthetic external benchmark smoke: pass.
+  - Run id: `gaia_20260508_124747`.
+  - Artifact root: `outputs/release_readiness/external_benchmarks/gaia_20260508_124747/`.
+- Offline benchmark determinism gate: pass.
+  - Summary: `outputs/release_readiness/eval_reports/eval_summary_20260508_124748.json`.
+- MCP filesystem `--check`: pass.
+- `python -m build`: pass.
+- `python -m twine check dist/*`: pass.
+
+Also verified the script wrapper:
+
+```bash
+python scripts\release_readiness.py --dry-run --json
+```
+
+Final post-documentation validation:
+
+```bash
+python -m pytest
+# 140 passed, 1 xfailed
+
+python -m ruff check SDYJ_Agents tests examples
+# All checks passed
+
+python -m build
+# built sdyj_multi_agents-0.6.0a1.tar.gz and sdyj_multi_agents-0.6.0a1-py3-none-any.whl
+
+python -m twine check dist/*
+# PASSED
+```
+
+External blockers reported by the new preflight:
+
+- `TAVILY_API_KEY=missing`; full DeepSeek + Tavily + arXiv live smoke remains blocked.
+- `docker=missing`; Docker runtime build/run/compose smoke still needs a Docker-enabled host.
+- `GITHUB_PERSONAL_ACCESS_TOKEN=missing`; GitHub MCP `--list-tools` remains blocked.
+
+No API key or raw secret value was printed or recorded.

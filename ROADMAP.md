@@ -71,6 +71,7 @@ Shipped in 0.6.0a1 and the current v0.6 branch:
 - [x] Real MCP client adapter via the official `mcp` Python SDK, with legacy HTTP fallback.
 - [x] Hugging Face Spaces-compatible root `app.py` entrypoint.
 - [x] `sdyj doctor` no-network environment preflight for local and hosted runs.
+- [x] `sdyj release-check` / `scripts/release_readiness.py` one-command local release preflight.
 - [x] MCP demo scripts for filesystem and GitHub servers.
 - [x] GitHub Pages workflow for publishing docs + static Trace Viewer.
 

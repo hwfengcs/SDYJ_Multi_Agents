@@ -17,6 +17,7 @@ def test_manifest_includes_deployment_and_fixture_files():
 
     assert "include app.py" in content
     assert "recursive-include docs *" in content
+    assert "recursive-include scripts *.py" in content
     assert "benchmarks/fixtures *.jsonl" in content
 
 

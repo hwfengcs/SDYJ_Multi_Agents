@@ -45,6 +45,34 @@ the `pypi` environment runs, so a release cannot be pushed to PyPI by accident.
 These gates do not replace Trusted Publisher setup or GitHub environment
 approval; they catch local release mistakes earlier in the workflow.
 
+### One-command local preflight
+
+For local release candidates, run the consolidated no-publish preflight:
+
+```bash
+sdyj release-check --provider deepseek
+```
+
+The same gate is also available as a script path:
+
+```bash
+python scripts/release_readiness.py --provider deepseek
+```
+
+The command runs the local doctor, full pytest suite, ruff, synthetic external
+benchmark smoke, offline benchmark determinism gate, MCP prerequisite checks,
+`python -m build`, and `twine check`. It reports missing external resources
+such as `TAVILY_API_KEY`, Docker, and `GITHUB_PERSONAL_ACCESS_TOKEN` as
+`BLOCKED` without printing secret values or publishing anything.
+
+Useful scoped variants:
+
+```bash
+sdyj release-check --dry-run
+sdyj release-check --skip-build
+sdyj release-check --skip-benchmark --skip-mcp
+```
+
 ## Cutting a release
 
 ### Pre-release (alpha / beta) → TestPyPI
@@ -98,6 +126,7 @@ conda activate sdyj
 pytest
 ruff check SDYJ_Agents tests examples
 sdyj benchmark run --max-scenarios 1 --max-iterations 2 --fail-under 0.75
+sdyj release-check --provider deepseek
 python -m build
 python -m twine check dist/*
 python -m pip install --force-reinstall dist/sdyj_multi_agents-*.whl

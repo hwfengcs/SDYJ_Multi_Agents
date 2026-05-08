@@ -28,6 +28,7 @@ from .. import __version__
 from ..benchmarks import run_external_benchmark
 from ..evaluation import run_evaluation
 from ..evaluation.scenarios import list_scenarios
+from ..release_check import create_release_check_parser, run_release_readiness_from_args
 from ..utils.config import (
     load_config_from_env,
     _parse_env_args,
@@ -1339,6 +1340,7 @@ def parse_args(argv: Any) -> argparse.Namespace:
             "  sdyj eval --max-scenarios 1\n"
             "  sdyj inspect-run\n"
             "  sdyj doctor\n"
+            "  sdyj release-check\n"
             "  sdyj config-info"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1610,6 +1612,15 @@ def parse_args(argv: Any) -> argparse.Namespace:
         args.command = "doctor"
         return args
 
+    if argv and argv[0] == "release-check":
+        parser = create_release_check_parser(
+            prog="sdyj release-check",
+            default_provider=saved_config.get("provider") or os.getenv("LLM_PROVIDER", "deepseek"),
+        )
+        args = parser.parse_args(argv[1:])
+        args.command = "release-check"
+        return args
+
     if argv and argv[0] == "research":
         argv = argv[1:]
 
@@ -1680,6 +1691,9 @@ def main(argv: Any = None) -> int:
 
     if args.command == "doctor":
         return run_doctor(provider=args.provider, strict=args.strict)
+
+    if args.command == "release-check":
+        return run_release_readiness_from_args(args)
 
     config = _create_config_from_args(args)
 

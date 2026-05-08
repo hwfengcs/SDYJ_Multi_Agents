@@ -12,6 +12,7 @@ include app.py
 include streamlit_app.py
 recursive-include docs *
 recursive-include examples *
+recursive-include scripts *.py
 recursive-include SDYJ_Agents/prompts *.md
 recursive-include SDYJ_Agents/web *.html
 recursive-include SDYJ_Agents/benchmarks/fixtures *.jsonl

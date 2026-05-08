@@ -45,6 +45,7 @@ def test_parse_utility_commands_without_api_key():
     diff_args = parse_args(["diff-runs", "run-a", "run-b", "--json"])
     runs_args = parse_args(["runs", "list", "--limit", "5"])
     doctor_args = parse_args(["doctor", "--provider", "deepseek", "--strict"])
+    release_check_args = parse_args(["release-check", "--skip-build", "--dry-run"])
 
     assert models.command == "list-models"
     assert models.provider == "deepseek"
@@ -72,6 +73,9 @@ def test_parse_utility_commands_without_api_key():
     assert doctor_args.command == "doctor"
     assert doctor_args.provider == "deepseek"
     assert doctor_args.strict is True
+    assert release_check_args.command == "release-check"
+    assert release_check_args.skip_build is True
+    assert release_check_args.dry_run is True
 
 
 def test_get_api_key_accepts_provider_aliases(monkeypatch):
@@ -152,3 +156,23 @@ def test_benchmark_external_cli_writes_artifacts(tmp_path, monkeypatch):
     predictions = list((tmp_path / "external_benchmarks").glob("*/predictions.jsonl"))
     assert len(summaries) == 1
     assert len(predictions) == 1
+
+
+def test_release_check_cli_dry_run_does_not_require_api_key(monkeypatch):
+    from SDYJ_Agents.cli import main as cli_main
+
+    monkeypatch.setattr(cli_main, "load_dotenv", lambda *a, **kw: None)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    exit_code = cli_main.main(
+        [
+            "release-check",
+            "--dry-run",
+            "--skip-build",
+            "--skip-benchmark",
+            "--skip-mcp",
+            "--skip-external-prereqs",
+        ]
+    )
+
+    assert exit_code == 0
