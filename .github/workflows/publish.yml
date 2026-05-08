@@ -57,6 +57,30 @@ jobs:
         shell: bash -el {0}
         run: python -m twine check dist/*
 
+      - name: Validate wheel install smoke
+        shell: bash -el {0}
+        run: |
+          python -m venv .wheel-smoke
+          source .wheel-smoke/bin/activate
+          python -m pip install --upgrade pip
+          WHEEL="$(ls dist/*.whl)"
+          python -m pip install "${WHEEL}[all]"
+          sdyj --version
+          sdyj --help
+          DEEPSEEK_API_KEY=dummy sdyj doctor --provider deepseek
+          python - <<'PY'
+          from importlib import resources
+
+          import SDYJ_Agents
+
+          assert SDYJ_Agents.__version__
+          assert (resources.files("SDYJ_Agents.prompts") / "rapporteur_revise.md").is_file()
+          assert (resources.files("SDYJ_Agents.web") / "trace_viewer.html").is_file()
+          assert (
+              resources.files("SDYJ_Agents.benchmarks.fixtures") / "gaia_mini.jsonl"
+          ).is_file()
+          PY
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

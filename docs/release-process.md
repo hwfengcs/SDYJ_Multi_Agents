@@ -85,6 +85,24 @@ sdyj --version
 sdyj doctor --provider deepseek
 ```
 
+The publish workflow runs the same release gate plus an additional clean
+wheel-install smoke before publishing:
+
+```bash
+python -m build
+python -m twine check dist/*
+python -m venv .wheel-smoke
+source .wheel-smoke/bin/activate
+python -m pip install "dist/<built-wheel>.whl[all]"
+sdyj --version
+sdyj --help
+DEEPSEEK_API_KEY=dummy sdyj doctor --provider deepseek
+```
+
+The dummy key is only used to prove the installed console script and no-network
+doctor command work from the wheel; do not use real provider secrets in release
+smoke logs.
+
 Run a live research smoke only after provider/search keys are present:
 
 ```bash
