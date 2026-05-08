@@ -312,3 +312,42 @@ docker run --rm -e DEEPSEEK_API_KEY=dummy sdyj:0.6 sdyj doctor --provider deepse
 docker compose config
 docker compose run --rm sdyj sdyj --help
 ```
+
+## 2026-05-08 - Final local release-readiness verification
+
+- Status: local verification pass; external platform/runtime blockers remain
+  documented.
+- Branch: `feat/v0.6-self-verifying`.
+- Recent local commits in this batch:
+  - `571bdc4 ci(release): harden hosted publish readiness`
+  - `49a8712 feat(benchmark): audit public smoke artifacts`
+
+Final validation:
+
+```bash
+python -m pytest
+python -m ruff check SDYJ_Agents tests examples
+python -m build
+python -m twine check dist/*
+git status --short --branch
+git log --oneline -10
+```
+
+Observed results:
+
+- `python -m pytest`: `134 passed, 1 xfailed`.
+- `python -m ruff check SDYJ_Agents tests examples`: all checks passed.
+- `python -m build`: built `sdyj_multi_agents-0.6.0a1.tar.gz` and
+  `sdyj_multi_agents-0.6.0a1-py3-none-any.whl`.
+- `python -m twine check dist/*`: both artifacts passed.
+- `git status --short --branch`: clean, branch ahead of origin by 2 commits
+  before this verification-note commit.
+
+Remaining blockers:
+
+- Full DeepSeek + Tavily + arXiv live research still requires a usable
+  `TAVILY_API_KEY`.
+- Docker runtime smoke still requires Docker installed/on `PATH`.
+- Hugging Face Spaces, GitHub Pages, GHCR, TestPyPI, and PyPI still require
+  platform-side setup or manual workflow execution before public URLs/packages
+  can be claimed.
