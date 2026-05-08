@@ -404,3 +404,56 @@ External blockers reported by the new preflight:
 - `GITHUB_PERSONAL_ACCESS_TOKEN=missing`; GitHub MCP `--list-tools` remains blocked.
 
 No API key or raw secret value was printed or recorded.
+
+## 2026-05-08 - Benchmark failure-analysis artifacts
+
+- Status: local benchmark auditability improved; no public GAIA score is claimed.
+- Scope:
+  - Internal `sdyj benchmark run` summaries now include `failure_analysis`
+    rollups for failed thresholds, with root-cause buckets such as
+    `planner_gap`, `citation_gap`, `tool_error`, `trace_gap`, and
+    `verifier_gap`.
+  - External `sdyj benchmark external` runs now write
+    `failure_analysis.json` and `failure_analysis.md` beside `summary.json`,
+    `manifest.jsonl`, `predictions.jsonl`, and `graded.jsonl`.
+
+Validation:
+
+```bash
+python -m pytest tests/test_external_benchmark.py tests/test_evaluation.py tests/test_cli.py
+# 24 passed
+
+python -m ruff check SDYJ_Agents\evaluation SDYJ_Agents\benchmarks\external_runner.py SDYJ_Agents\cli\main.py tests\test_evaluation.py tests\test_external_benchmark.py tests\test_cli.py
+# All checks passed
+
+sdyj benchmark run --max-scenarios 1 --max-iterations 2 --fail-under 0.75 --determinism-repeats 2 --output-dir outputs\verify_failure_analysis_gate
+# average score 1.0000, passed; summary: outputs\verify_failure_analysis_gate\eval_reports\eval_summary_20260508_132634.json
+
+sdyj benchmark external --suite gaia --source local --limit 3 --output-dir outputs\public_benchmarks_failure_analysis --fail-under 1.0
+# run id: gaia_20260508_132633, accuracy 1.0000, passed
+
+python -m pytest
+# 142 passed, 1 xfailed
+
+python -m ruff check SDYJ_Agents tests examples
+# All checks passed
+
+python -m build
+# built sdyj_multi_agents-0.6.0a1.tar.gz and sdyj_multi_agents-0.6.0a1-py3-none-any.whl
+
+python -m twine check dist/*
+# PASSED
+
+sdyj release-check --provider deepseek --output-dir outputs\release_readiness_failure_analysis
+# required gates passed; Tavily, Docker runtime, and GitHub MCP token remain BLOCKED
+```
+
+Committed public smoke artifacts now include:
+
+- `docs/public-benchmark-artifacts/gaia-smoke-failure-analysis.json`
+- `docs/public-benchmark-artifacts/gaia-smoke-failure-analysis.md`
+
+External blockers remain unchanged: real GAIA Level 1 still requires Hugging
+Face login / dataset access and real predictions; Tavily live research still
+requires `TAVILY_API_KEY`; Docker runtime smoke still requires a Docker-enabled
+host.

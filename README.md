@@ -120,12 +120,15 @@ Trace v2 bundle → outputs/runs/<run-id>/
 
 本地可验证的发布准备已经基本收口：
 
-- `python -m pytest`：`140 passed, 1 xfailed`。
+- 最新真实 provider、benchmark、Docker 与 hosted demo 状态以
+  [docs/live-run-notes.md](docs/live-run-notes.md) 为准；这里仅是
+  release-readiness 快照。
+- `python -m pytest`：`142 passed, 1 xfailed`。
 - `python -m ruff check SDYJ_Agents tests examples`：通过。
 - `python -m build` 与 `python -m twine check dist/*`：通过。
 - 新增 `sdyj release-check` / `python scripts/release_readiness.py`，可一键汇总 doctor、pytest、ruff、build、twine、benchmark 与 MCP 本地预检；外部缺口只报告为 blocker，不打印 secret，也不发布任何资产。
 - GitHub Pages、Hugging Face Spaces、TestPyPI/PyPI、Docker/GHCR 都已有本地文档、workflow 或静态 gate；真实 URL / 包 / 镜像发布仍等待平台侧操作。
-- 公开 benchmark harness 已提交 synthetic GAIA-style smoke 的 `summary` / `manifest` / `predictions` / `graded` artifacts，见 [docs/benchmark-results-public.md](docs/benchmark-results-public.md)。这不是 GAIA 公共分数，只证明 runner、grader 与 artifact layout 可复现。
+- 公开 benchmark harness 已提交 synthetic GAIA-style smoke 的 `summary` / `manifest` / `predictions` / `graded` / failure-analysis artifacts，见 [docs/benchmark-results-public.md](docs/benchmark-results-public.md)。这不是 GAIA 公共分数，只证明 runner、grader、failure analysis 与 artifact layout 可复现。
 - MCP filesystem demo 的 no-secret `--check` 已通过；GitHub MCP `--check` 在无 `GITHUB_PERSONAL_ACCESS_TOKEN` 时会安全失败且只输出布尔状态。
 
 仍需外部条件后才能完成的事项：

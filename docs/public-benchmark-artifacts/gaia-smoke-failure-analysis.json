@@ -5,21 +5,18 @@
   "source": "local",
   "split": "validation",
   "limit": 3,
-  "hf_dataset": null,
-  "hf_config": null,
-  "data_path": null,
-  "predictions_input": null,
   "prediction_source": "example_metadata_baseline",
-  "example_count": 3,
-  "correct": 3,
+  "fail_under": 1.0,
+  "passed": true,
   "accuracy": 1.0,
   "prediction_coverage": 1.0,
   "missing_prediction_count": 0,
   "missing_expected_answer_count": 0,
   "incorrect_task_ids": [],
-  "fail_under": 1.0,
-  "fail_under_delta": null,
-  "passed": true,
+  "failure_row_count": 0,
+  "root_cause_counts": {},
+  "task_ids_by_root_cause": {},
+  "failure_rows": [],
   "artifacts": {
     "run_dir": "outputs\\public_benchmarks\\external_benchmarks\\gaia_20260508_120004",
     "manifest": "outputs\\public_benchmarks\\external_benchmarks\\gaia_20260508_120004\\manifest.jsonl",
@@ -28,12 +25,5 @@
     "summary": "outputs\\public_benchmarks\\external_benchmarks\\gaia_20260508_120004\\summary.json",
     "failure_analysis_json": "outputs\\public_benchmarks\\external_benchmarks\\gaia_20260508_120004\\failure_analysis.json",
     "failure_analysis_md": "outputs\\public_benchmarks\\external_benchmarks\\gaia_20260508_120004\\failure_analysis.md"
-  },
-  "failure_analysis": {
-    "failure_row_count": 0,
-    "root_cause_counts": {},
-    "task_ids_by_root_cause": {},
-    "json": "outputs\\public_benchmarks\\external_benchmarks\\gaia_20260508_120004\\failure_analysis.json",
-    "markdown": "outputs\\public_benchmarks\\external_benchmarks\\gaia_20260508_120004\\failure_analysis.md"
   }
 }

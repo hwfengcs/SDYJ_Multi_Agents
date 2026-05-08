@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from SDYJ_Agents import __version__
@@ -41,6 +43,7 @@ def test_parse_utility_commands_without_api_key():
     ])
     benchmark_args = parse_args(["benchmark", "run", "--fail-under", "0.7", "--determinism-repeats", "2"])
     benchmark_external = parse_args(["benchmark", "external", "--suite", "gaia", "--limit", "2"])
+    benchmark_compare = parse_args(["benchmark", "compare", "baseline.json", "candidate.json", "--json"])
     replay_args = parse_args(["replay", "abc123"])
     diff_args = parse_args(["diff-runs", "run-a", "run-b", "--json"])
     runs_args = parse_args(["runs", "list", "--limit", "5"])
@@ -64,6 +67,8 @@ def test_parse_utility_commands_without_api_key():
     assert benchmark_external.command == "benchmark-external"
     assert benchmark_external.suite == "gaia"
     assert benchmark_external.limit == 2
+    assert benchmark_compare.command == "benchmark-compare"
+    assert benchmark_compare.json is True
     assert replay_args.command == "replay"
     assert diff_args.command == "diff-runs"
     assert diff_args.json is True
@@ -154,8 +159,49 @@ def test_benchmark_external_cli_writes_artifacts(tmp_path, monkeypatch):
     assert exit_code == 0
     summaries = list((tmp_path / "external_benchmarks").glob("*/summary.json"))
     predictions = list((tmp_path / "external_benchmarks").glob("*/predictions.jsonl"))
+    failure_analysis = list((tmp_path / "external_benchmarks").glob("*/failure_analysis.json"))
     assert len(summaries) == 1
     assert len(predictions) == 1
+    assert len(failure_analysis) == 1
+
+
+def test_benchmark_compare_cli_flags_metric_regression(tmp_path):
+    from SDYJ_Agents.cli import main as cli_main
+
+    baseline = tmp_path / "baseline.json"
+    candidate = tmp_path / "candidate.json"
+    baseline.write_text(
+        json.dumps(
+            {
+                "average_score": 1.0,
+                "results": [
+                    {
+                        "scenario_id": "agent_reliability_hard",
+                        "metrics": {"overall_score": 1.0, "citation_id_coverage": 1.0},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    candidate.write_text(
+        json.dumps(
+            {
+                "average_score": 1.0,
+                "results": [
+                    {
+                        "scenario_id": "agent_reliability_hard",
+                        "metrics": {"overall_score": 1.0, "citation_id_coverage": 0.5},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = cli_main.main(["benchmark", "compare", str(baseline), str(candidate), "--json"])
+
+    assert exit_code == 3
 
 
 def test_release_check_cli_dry_run_does_not_require_api_key(monkeypatch):

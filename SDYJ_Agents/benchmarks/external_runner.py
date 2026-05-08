@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -82,6 +83,164 @@ def _prediction_rows(predictions: list[Prediction]) -> list[dict[str, str]]:
     ]
 
 
+_FAILURE_ROOT_CAUSES = (
+    "missing_prediction",
+    "wrong_answer",
+    "missing_expected_answer",
+)
+
+
+def _failure_root_causes(row: dict[str, Any]) -> list[str]:
+    causes = []
+    if not row.get("has_prediction"):
+        causes.append("missing_prediction")
+    if not row.get("has_expected_answer"):
+        causes.append("missing_expected_answer")
+    if row.get("has_prediction") and row.get("has_expected_answer") and not row.get("correct"):
+        causes.append("wrong_answer")
+    if not causes and not row.get("correct"):
+        causes.append("wrong_answer")
+    return causes
+
+
+def _failure_note(root_causes: list[str]) -> str:
+    notes = []
+    if "missing_prediction" in root_causes:
+        notes.append("Prediction file omitted this task.")
+    if "missing_expected_answer" in root_causes:
+        notes.append("Source row has no expected answer, so the example is auditable but not fully gradeable.")
+    if "wrong_answer" in root_causes:
+        notes.append("Prediction did not normalize to the expected answer.")
+    return " ".join(notes)
+
+
+def _render_failure_analysis_markdown(analysis: dict[str, Any]) -> str:
+    lines = [
+        "# External Benchmark Failure Analysis",
+        "",
+        "## Run Metadata",
+        f"- Run id: `{analysis['run_id']}`",
+        f"- Suite: `{analysis['suite']}`",
+        f"- Source: `{analysis['source']}`",
+        f"- Split: `{analysis['split']}`",
+        f"- Limit: `{analysis['limit']}`",
+        f"- Prediction source: `{analysis['prediction_source']}`",
+        "",
+        "## Result",
+        f"- Passed: `{analysis['passed']}`",
+        f"- Accuracy: `{analysis['accuracy']:.4f}`",
+        f"- Prediction coverage: `{analysis['prediction_coverage']:.4f}`",
+        f"- Missing prediction count: `{analysis['missing_prediction_count']}`",
+        f"- Missing expected-answer count: `{analysis['missing_expected_answer_count']}`",
+        f"- Incorrect task ids: `{', '.join(analysis['incorrect_task_ids']) or 'none'}`",
+        f"- Failure row count: `{analysis['failure_row_count']}`",
+        "",
+        "## Root Cause Counts",
+    ]
+    counts = analysis.get("root_cause_counts") or {}
+    if counts:
+        for cause in _FAILURE_ROOT_CAUSES:
+            if cause in counts:
+                lines.append(f"- `{cause}`: `{counts[cause]}`")
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Failed Rows"])
+    rows = analysis.get("failure_rows") or []
+    if not rows:
+        lines.append("- None")
+    else:
+        for row in rows:
+            causes = ", ".join(row.get("root_causes") or []) or "none"
+            prediction = (row.get("prediction") or "").strip()
+            prediction_excerpt = prediction if len(prediction) <= 120 else f"{prediction[:117]}..."
+            note = row.get("note") or "No additional note."
+            lines.append(
+                f"- `{row['task_id']}` | `{causes}` | `{prediction_excerpt or 'n/a'}` | {note}"
+            )
+    lines.extend(
+        [
+            "",
+            "## Artifacts",
+            f"- Summary: `{analysis['artifacts']['summary']}`",
+            f"- Manifest: `{analysis['artifacts']['manifest']}`",
+            f"- Predictions: `{analysis['artifacts']['predictions']}`",
+            f"- Graded rows: `{analysis['artifacts']['graded']}`",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _build_failure_analysis(
+    *,
+    run_id: str,
+    suite: str,
+    source: str,
+    split: str,
+    limit: int | None,
+    prediction_source: str,
+    fail_under: float | None,
+    passed: bool,
+    graded: dict[str, Any],
+    examples: list[ExternalExample],
+    artifacts: dict[str, str],
+) -> dict[str, Any]:
+    failure_rows = []
+    root_cause_counts: Counter[str] = Counter()
+    task_ids_by_root_cause: dict[str, list[str]] = defaultdict(list)
+
+    for example, row in zip(examples, graded.get("rows", []), strict=True):
+        if row.get("correct"):
+            continue
+        root_causes = _failure_root_causes(row)
+        for cause in root_causes:
+            root_cause_counts[cause] += 1
+            task_ids_by_root_cause[cause].append(example.task_id)
+        failure_rows.append(
+            {
+                "task_id": example.task_id,
+                "level": example.level,
+                "file_name": example.file_name,
+                "prediction": row.get("prediction", ""),
+                "has_prediction": row.get("has_prediction", False),
+                "has_expected_answer": row.get("has_expected_answer", False),
+                "correct": row.get("correct", False),
+                "root_causes": root_causes,
+                "note": _failure_note(root_causes),
+            }
+        )
+
+    return {
+        "run_id": run_id,
+        "created_at": datetime.now().isoformat(),
+        "suite": suite,
+        "source": source,
+        "split": split,
+        "limit": limit,
+        "prediction_source": prediction_source,
+        "fail_under": fail_under,
+        "passed": passed,
+        "accuracy": graded["accuracy"],
+        "prediction_coverage": graded["prediction_coverage"],
+        "missing_prediction_count": graded["missing_prediction_count"],
+        "missing_expected_answer_count": graded["missing_expected_answer_count"],
+        "incorrect_task_ids": graded["incorrect_task_ids"],
+        "failure_row_count": len(failure_rows),
+        "root_cause_counts": {
+            cause: root_cause_counts[cause]
+            for cause in _FAILURE_ROOT_CAUSES
+            if root_cause_counts[cause]
+        },
+        "task_ids_by_root_cause": {
+            cause: task_ids_by_root_cause[cause]
+            for cause in _FAILURE_ROOT_CAUSES
+            if task_ids_by_root_cause[cause]
+        },
+        "failure_rows": failure_rows,
+        "artifacts": artifacts,
+    }
+
+
 def run_external_benchmark(
     suite: str = "gaia",
     source: str = "local",
@@ -123,10 +282,41 @@ def run_external_benchmark(
     predictions_out = run_dir / "predictions.jsonl"
     graded_path = run_dir / "graded.jsonl"
     summary_path = run_dir / "summary.json"
+    failure_analysis_json_path = run_dir / "failure_analysis.json"
+    failure_analysis_md_path = run_dir / "failure_analysis.md"
+
+    artifact_paths = {
+        "run_dir": str(run_dir),
+        "manifest": str(manifest_path),
+        "predictions": str(predictions_out),
+        "graded": str(graded_path),
+        "summary": str(summary_path),
+        "failure_analysis_json": str(failure_analysis_json_path),
+        "failure_analysis_md": str(failure_analysis_md_path),
+    }
 
     _write_jsonl(manifest_path, _manifest_rows(examples))
     _write_jsonl(predictions_out, _prediction_rows(predictions))
     _write_jsonl(graded_path, graded["rows"])
+
+    failure_analysis = _build_failure_analysis(
+        run_id=run_id,
+        suite=suite,
+        source=source,
+        split=split,
+        limit=limit,
+        prediction_source=prediction_source,
+        fail_under=fail_under,
+        passed=passed,
+        graded=graded,
+        examples=examples,
+        artifacts=artifact_paths,
+    )
+    failure_analysis_md_path.write_text(
+        _render_failure_analysis_markdown(failure_analysis),
+        encoding="utf-8",
+    )
+    _write_json(failure_analysis_json_path, failure_analysis)
 
     summary = {
         "run_id": run_id,
@@ -151,11 +341,14 @@ def run_external_benchmark(
         "fail_under_delta": fail_under_delta,
         "passed": passed,
         "artifacts": {
-            "run_dir": str(run_dir),
-            "manifest": str(manifest_path),
-            "predictions": str(predictions_out),
-            "graded": str(graded_path),
-            "summary": str(summary_path),
+            **artifact_paths,
+        },
+        "failure_analysis": {
+            "failure_row_count": failure_analysis["failure_row_count"],
+            "root_cause_counts": failure_analysis["root_cause_counts"],
+            "task_ids_by_root_cause": failure_analysis["task_ids_by_root_cause"],
+            "json": failure_analysis["artifacts"]["failure_analysis_json"],
+            "markdown": failure_analysis["artifacts"]["failure_analysis_md"],
         },
     }
     _write_json(summary_path, summary)

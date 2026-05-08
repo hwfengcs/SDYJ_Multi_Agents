@@ -36,6 +36,11 @@ def test_external_benchmark_writes_artifacts(tmp_path):
     assert summary_path.exists()
     assert manifest_path.exists()
     assert json.loads(summary_path.read_text(encoding="utf-8"))["accuracy"] == 1.0
+    failure_analysis_path = tmp_path / "external_benchmarks" / summary["run_id"] / "failure_analysis.json"
+    assert failure_analysis_path.exists()
+    assert summary["failure_analysis"]["failure_row_count"] == 0
+    assert summary["failure_analysis"]["root_cause_counts"] == {}
+    assert Path(summary["artifacts"]["failure_analysis_md"]).exists()
 
 
 def test_external_benchmark_accepts_prediction_file(tmp_path):
@@ -59,6 +64,7 @@ def test_external_benchmark_accepts_prediction_file(tmp_path):
     assert summary["prediction_source"] == "predictions_file"
     assert summary["prediction_coverage"] == 1.0
     assert summary["incorrect_task_ids"] == ["gaia-mini-002"]
+    assert summary["failure_analysis"]["root_cause_counts"] == {"wrong_answer": 1}
 
 
 def test_external_benchmark_records_missing_predictions_and_failed_threshold(tmp_path):
@@ -80,6 +86,11 @@ def test_external_benchmark_records_missing_predictions_and_failed_threshold(tmp
     assert summary["missing_prediction_count"] == 2
     assert summary["incorrect_task_ids"] == ["gaia-mini-002", "gaia-mini-003"]
     assert summary["fail_under_delta"] == pytest.approx(0.9 - (1 / 3))
+    assert summary["failure_analysis"]["root_cause_counts"] == {"missing_prediction": 2}
+    assert summary["failure_analysis"]["task_ids_by_root_cause"]["missing_prediction"] == [
+        "gaia-mini-002",
+        "gaia-mini-003",
+    ]
 
 
 def test_external_benchmark_source_jsonl_without_expected_answer_is_auditable(tmp_path):
@@ -107,6 +118,7 @@ def test_external_benchmark_source_jsonl_without_expected_answer_is_auditable(tm
 
     assert summary["missing_expected_answer_count"] == 1
     assert summary["prediction_coverage"] == 1.0
+    assert summary["failure_analysis"]["root_cause_counts"] == {"missing_expected_answer": 1}
     assert graded_row["has_expected_answer"] is False
     assert graded_row["correct"] is False
 
@@ -132,5 +144,11 @@ def test_committed_public_benchmark_smoke_artifacts_are_complete():
         "gaia-smoke-manifest.jsonl",
         "gaia-smoke-predictions.jsonl",
         "gaia-smoke-graded.jsonl",
+        "gaia-smoke-failure-analysis.json",
+        "gaia-smoke-failure-analysis.md",
     ]:
         assert (docs_artifacts / filename).is_file()
+
+    summary = json.loads((docs_artifacts / "gaia-smoke-summary.json").read_text(encoding="utf-8"))
+    assert summary["failure_analysis"]["failure_row_count"] == 0
+    assert summary["artifacts"]["failure_analysis_json"].endswith("failure_analysis.json")

@@ -120,7 +120,10 @@ The full v0.6 plan lives in [`docs/release-notes/v0.6.md`](docs/release-notes/v0
 
 The locally verifiable release work is mostly closed down:
 
-- `python -m pytest`: `140 passed, 1 xfailed`.
+- Latest live-provider, benchmark, Docker, and hosted-demo status is tracked in
+  [docs/live-run-notes.md](docs/live-run-notes.md); this README is only a
+  release-readiness snapshot.
+- `python -m pytest`: `142 passed, 1 xfailed`.
 - `python -m ruff check SDYJ_Agents tests examples`: passed.
 - `python -m build` and `python -m twine check dist/*`: passed.
 - `sdyj release-check` / `python scripts/release_readiness.py` now bundles
@@ -131,7 +134,8 @@ The locally verifiable release work is mostly closed down:
   local docs, workflows, or static gates. Real public URLs, packages, and
   images still require platform-side setup.
 - The public benchmark harness now commits synthetic GAIA-style smoke
-  `summary`, `manifest`, `predictions`, and `graded` artifacts. See
+  `summary`, `manifest`, `predictions`, `graded`, and failure-analysis
+  artifacts. See
   [docs/benchmark-results-public.md](docs/benchmark-results-public.md). This is
   not a GAIA public score; it only proves the runner, grader, and artifact
   layout are reproducible.

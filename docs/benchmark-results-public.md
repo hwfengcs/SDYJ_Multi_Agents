@@ -20,6 +20,8 @@ Committed smoke artifacts:
 - [`manifest.jsonl`](public-benchmark-artifacts/gaia-smoke-manifest.jsonl)
 - [`predictions.jsonl`](public-benchmark-artifacts/gaia-smoke-predictions.jsonl)
 - [`graded.jsonl`](public-benchmark-artifacts/gaia-smoke-graded.jsonl)
+- [`failure_analysis.json`](public-benchmark-artifacts/gaia-smoke-failure-analysis.json)
+- [`failure_analysis.md`](public-benchmark-artifacts/gaia-smoke-failure-analysis.md)
 
 Local full artifact path: `outputs/public_benchmarks/external_benchmarks/gaia_20260508_120004/summary.json`.
 
@@ -36,6 +38,8 @@ outputs/public_benchmarks/external_benchmarks/<run-id>/
   manifest.jsonl
   predictions.jsonl
   graded.jsonl
+  failure_analysis.json
+  failure_analysis.md
   summary.json
 ```
 
@@ -82,3 +86,6 @@ for every failed threshold, incomplete prediction file, or external blocker.
 The summary fields `prediction_coverage`, `missing_prediction_count`,
 `missing_expected_answer_count`, `incorrect_task_ids`, and `fail_under_delta`
 exist so public benchmark claims can be audited without rerunning the suite.
+Each run also writes machine-readable and Markdown failure analysis files so
+missing predictions, ungradeable examples, and wrong answers are grouped by
+root cause instead of being buried in aggregate accuracy.

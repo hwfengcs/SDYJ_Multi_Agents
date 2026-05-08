@@ -1,4 +1,4 @@
-from SDYJ_Agents.evaluation.runner import run_evaluation
+from SDYJ_Agents.evaluation import compare_evaluation_summaries, run_evaluation
 from SDYJ_Agents.evaluation.metrics import apply_thresholds, trace_completeness
 
 
@@ -46,6 +46,36 @@ def test_threshold_overrides_report_failed_metric(tmp_path):
     result = summary["results"][0]
     assert result["passed"] is False
     assert result["failed_thresholds"][0]["metric"] == "tool_success_rate"
+    assert result["failure_analysis"]["failed_metrics"][0]["root_cause"] == "tool_error"
+    assert summary["failure_analysis"]["root_cause_counts"] == {"tool_error": 1}
+
+
+def test_compare_summary_flags_metric_regression():
+    comparison = compare_evaluation_summaries(
+        current={
+            "results": [
+                {
+                    "scenario_id": "agent_reliability_hard",
+                    "metrics": {"overall_score": 1.0, "citation_id_coverage": 0.5},
+                }
+            ]
+        },
+        baseline={
+            "summary_path": "baseline.json",
+            "results": [
+                {
+                    "scenario_id": "agent_reliability_hard",
+                    "metrics": {"overall_score": 1.0, "citation_id_coverage": 1.0},
+                }
+            ],
+        },
+    )
+
+    assert comparison["passed"] is False
+    assert comparison["metric_regression_count"] == 1
+    regression = comparison["rows"][0]["metric_regressions"][0]
+    assert regression["metric"] == "citation_id_coverage"
+    assert regression["root_cause"] == "citation_gap"
 
 
 def test_trace_completeness_scores_required_fields():

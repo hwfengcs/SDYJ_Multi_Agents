@@ -111,7 +111,10 @@ Each run writes:
 - `graded.jsonl` with per-task correctness;
 - `summary.json` with accuracy, prediction coverage, missing prediction count,
   missing expected-answer count, incorrect task ids, fail-under delta,
-  pass/fail status, and artifact paths.
+  pass/fail status, failure-analysis rollups, and artifact paths;
+- `failure_analysis.json` and `failure_analysis.md` with per-task root causes
+  (`missing_prediction`, `wrong_answer`, `missing_expected_answer`) and
+  grouped task ids for audit.
 
 Real GAIA validation/test data may be gated. If Hugging Face access is missing,
 record that blocker in `docs/live-run-notes.md` and use `--source local` or
@@ -149,6 +152,9 @@ Each scenario can define thresholds. A benchmark summary includes:
 - `passed`
 - `failed_scenarios`
 - `failed_thresholds`
+- `failure_analysis` with failed metric counts and root-cause buckets such as
+  `planner_gap`, `citation_gap`, `tool_error`, `trace_gap`, and
+  `verifier_gap`
 - `determinism`
 - `comparison`
 - paths to generated report and trace artifacts

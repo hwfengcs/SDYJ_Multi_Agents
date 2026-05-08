@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -25,6 +26,94 @@ from ..utils.tracing import (
 from ..workflow.graph import ResearchWorkflow
 from .metrics import apply_thresholds, evaluate_state
 from .scenarios import HARD_SCENARIOS, get_scenario
+
+
+REGRESSION_METRIC_KEYS = [
+    "overall_score",
+    "plan_coverage",
+    "section_completeness",
+    "citation_id_coverage",
+    "citation_density_per_1k_chars",
+    "tool_success_rate",
+    "grounded_key_finding_rate",
+    "trace_completeness",
+]
+
+
+def _metric_root_cause(metric: str) -> str:
+    if metric == "plan_coverage":
+        return "planner_gap"
+    if metric == "section_completeness":
+        return "report_structure_gap"
+    if metric in {
+        "citation_id_coverage",
+        "citation_density_per_1k_chars",
+        "grounded_key_finding_rate",
+    }:
+        return "citation_gap"
+    if metric == "tool_success_rate":
+        return "tool_error"
+    if metric == "trace_completeness":
+        return "trace_gap"
+    if metric.startswith("verifier_") or metric == "revision_count":
+        return "verifier_gap"
+    return "aggregate_quality_gap"
+
+
+def _scenario_failure_analysis(result: Dict[str, Any]) -> Dict[str, Any]:
+    failed_metrics = []
+    root_cause_counts: Counter[str] = Counter()
+    for failure in result.get("failed_thresholds", []):
+        metric = str(failure.get("metric"))
+        root_cause = _metric_root_cause(metric)
+        root_cause_counts[root_cause] += 1
+        actual = failure.get("actual")
+        threshold = failure.get("threshold")
+        delta = (
+            round(float(threshold) - float(actual), 4)
+            if isinstance(actual, (int, float)) and isinstance(threshold, (int, float))
+            else None
+        )
+        failed_metrics.append(
+            {
+                "metric": metric,
+                "actual": actual,
+                "threshold": threshold,
+                "threshold_delta": delta,
+                "root_cause": root_cause,
+            }
+        )
+    return {
+        "failed_metric_count": len(failed_metrics),
+        "root_cause_counts": dict(root_cause_counts),
+        "failed_metrics": failed_metrics,
+    }
+
+
+def _aggregate_failure_analysis(results: list[Dict[str, Any]]) -> Dict[str, Any]:
+    root_cause_counts: Counter[str] = Counter()
+    scenarios = []
+    failed_metric_count = 0
+    for result in results:
+        analysis = result.get("failure_analysis") or {}
+        failed_metrics = analysis.get("failed_metrics") or []
+        if not failed_metrics:
+            continue
+        failed_metric_count += len(failed_metrics)
+        root_cause_counts.update(analysis.get("root_cause_counts") or {})
+        scenarios.append(
+            {
+                "scenario_id": result.get("scenario_id"),
+                "passed": result.get("passed"),
+                "failed_metrics": failed_metrics,
+            }
+        )
+    return {
+        "failed_scenario_count": len(scenarios),
+        "failed_metric_count": failed_metric_count,
+        "root_cause_counts": dict(root_cause_counts),
+        "scenarios": scenarios,
+    }
 
 
 class CannedSearchTool:
@@ -326,7 +415,7 @@ def _run_one_scenario(
         with open(report_path, "w", encoding="utf-8") as f:
             f.write(final_state["final_report"])
 
-    return {
+    result = {
         "scenario_id": scenario["id"],
         "title": scenario["title"],
         "query": scenario["query"],
@@ -338,6 +427,8 @@ def _run_one_scenario(
         "report_path": str(report_path) if final_state.get("final_report") else None,
         "run_id": trace["run_id"],
     }
+    result["failure_analysis"] = _scenario_failure_analysis(result)
+    return result
 
 
 def _stable_result_fingerprint(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -377,12 +468,30 @@ def _compare_summaries(current: Dict[str, Any], baseline: Dict[str, Any]) -> Dic
         old_score = old.get("metrics", {}).get("overall_score", 0.0)
         new_score = item.get("metrics", {}).get("overall_score", 0.0)
         delta = round(new_score - old_score, 4)
+        metric_regressions = []
+        for metric in REGRESSION_METRIC_KEYS:
+            old_metric = old.get("metrics", {}).get(metric)
+            new_metric = item.get("metrics", {}).get(metric)
+            if not isinstance(old_metric, (int, float)) or not isinstance(new_metric, (int, float)):
+                continue
+            metric_delta = round(new_metric - old_metric, 4)
+            if metric_delta < -0.02:
+                metric_regressions.append(
+                    {
+                        "metric": metric,
+                        "baseline": old_metric,
+                        "current": new_metric,
+                        "delta": metric_delta,
+                        "root_cause": _metric_root_cause(metric),
+                    }
+                )
         row = {
             "scenario_id": scenario_id,
             "baseline_score": old_score,
             "current_score": new_score,
             "delta": delta,
-            "regressed": delta < -0.02,
+            "metric_regressions": metric_regressions,
+            "regressed": delta < -0.02 or bool(metric_regressions),
         }
         rows.append(row)
         if row["regressed"]:
@@ -391,8 +500,14 @@ def _compare_summaries(current: Dict[str, Any], baseline: Dict[str, Any]) -> Dic
         "baseline_path": baseline.get("summary_path"),
         "rows": rows,
         "regressions": regressions,
+        "metric_regression_count": sum(len(row.get("metric_regressions", [])) for row in regressions),
         "passed": not regressions,
     }
+
+
+def compare_evaluation_summaries(current: Dict[str, Any], baseline: Dict[str, Any]) -> Dict[str, Any]:
+    """Public wrapper for comparing benchmark summaries with metric-level regressions."""
+    return _compare_summaries(current, baseline)
 
 
 def run_evaluation(
@@ -515,6 +630,7 @@ def run_evaluation(
             for item in failed_scenarios
         ],
         "determinism": determinism,
+        "failure_analysis": _aggregate_failure_analysis(results),
         "results": results,
     }
 

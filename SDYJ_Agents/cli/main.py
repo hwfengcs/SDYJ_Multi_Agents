@@ -26,7 +26,7 @@ from rich.table import Table
 
 from .. import __version__
 from ..benchmarks import run_external_benchmark
-from ..evaluation import run_evaluation
+from ..evaluation import compare_evaluation_summaries, run_evaluation
 from ..evaluation.scenarios import list_scenarios
 from ..release_check import create_release_check_parser, run_release_readiness_from_args
 from ..utils.config import (
@@ -1030,34 +1030,22 @@ def compare_benchmark_summaries(
         with open(candidate_path, "r", encoding="utf-8") as f:
             candidate = json.load(f)
 
-        baseline_by_id = {item["scenario_id"]: item for item in baseline.get("results", [])}
-        rows = []
-        for item in candidate.get("results", []):
-            scenario_id = item["scenario_id"]
-            old = baseline_by_id.get(scenario_id, {})
-            old_score = old.get("metrics", {}).get("overall_score")
-            new_score = item.get("metrics", {}).get("overall_score")
-            delta = (
-                round(new_score - old_score, 4)
-                if isinstance(old_score, (int, float)) and isinstance(new_score, (int, float))
-                else None
-            )
-            rows.append(
-                {
-                    "scenario_id": scenario_id,
-                    "baseline_score": old_score,
-                    "candidate_score": new_score,
-                    "delta": delta,
-                    "regressed": isinstance(delta, (int, float)) and delta < -0.02,
-                }
-            )
+        comparison = compare_evaluation_summaries(current=candidate, baseline=baseline)
+        rows = [
+            {
+                **row,
+                "candidate_score": row.get("current_score"),
+            }
+            for row in comparison["rows"]
+        ]
         payload = {
             "baseline": baseline_path,
             "candidate": candidate_path,
             "baseline_average": baseline.get("average_score"),
             "candidate_average": candidate.get("average_score"),
             "rows": rows,
-            "passed": not any(row["regressed"] for row in rows),
+            "metric_regression_count": comparison.get("metric_regression_count", 0),
+            "passed": comparison["passed"],
         }
         if as_json:
             console.print(json.dumps(payload, indent=2, ensure_ascii=False))
@@ -1227,6 +1215,7 @@ def execute_external_benchmark(args: argparse.Namespace) -> int:
     console.print(f"[green][OK] summary: {summary['artifacts']['summary']}[/green]")
     console.print(f"[dim]predictions: {summary['artifacts']['predictions']}[/dim]")
     console.print(f"[dim]graded: {summary['artifacts']['graded']}[/dim]")
+    console.print(f"[dim]failure analysis: {summary['artifacts']['failure_analysis_md']}[/dim]")
     return 0 if summary["passed"] else 3
 
 
