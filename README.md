@@ -116,6 +116,24 @@ Trace v2 bundle → outputs/runs/<run-id>/
 
 完整 v0.6 计划见 [`docs/release-notes/v0.6.md`](docs/release-notes/v0.6.md) 与 [ROADMAP.md](ROADMAP.md)。
 
+## v0.6 发布准备快照（2026-05-08）
+
+本地可验证的发布准备已经基本收口：
+
+- `python -m pytest`：`134 passed, 1 xfailed`。
+- `python -m ruff check SDYJ_Agents tests examples`：通过。
+- `python -m build` 与 `python -m twine check dist/*`：通过。
+- GitHub Pages、Hugging Face Spaces、TestPyPI/PyPI、Docker/GHCR 都已有本地文档、workflow 或静态 gate；真实 URL / 包 / 镜像发布仍等待平台侧操作。
+- 公开 benchmark harness 已提交 synthetic GAIA-style smoke 的 `summary` / `manifest` / `predictions` / `graded` artifacts，见 [docs/benchmark-results-public.md](docs/benchmark-results-public.md)。这不是 GAIA 公共分数，只证明 runner、grader 与 artifact layout 可复现。
+- MCP filesystem demo 的 no-secret `--check` 已通过；GitHub MCP `--check` 在无 `GITHUB_PERSONAL_ACCESS_TOKEN` 时会安全失败且只输出布尔状态。
+
+仍需外部条件后才能完成的事项：
+
+- 配置真实 `TAVILY_API_KEY` 后重跑 DeepSeek + Tavily + arXiv live smoke，并执行 `inspect-run` / `replay` / `diff-runs`。
+- 在 Docker-enabled host 上跑 build/run/compose smoke。
+- 启用 GitHub Pages、创建 Hugging Face Space、配置 Trusted Publishers，再把 README 顶部隐藏 badge 切换为真实链接。
+- 获取 Hugging Face GAIA 数据集访问与真实 predictions 后，才能 claim GAIA Level 1 小切片结果。
+
 ## Trace、回放、检查
 
 每次运行会写入 `outputs/runs/<run-id>/` 下的 bundle，并保留兼容路径 `outputs/traces/<run-id>.json`：

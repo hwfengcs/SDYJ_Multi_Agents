@@ -116,6 +116,35 @@ See [docs/architecture.md](docs/architecture.md) for the full design notes.
 
 The full v0.6 plan lives in [`docs/release-notes/v0.6.md`](docs/release-notes/v0.6.md) and [ROADMAP.md](ROADMAP.md).
 
+## v0.6 release-readiness snapshot (2026-05-08)
+
+The locally verifiable release work is mostly closed down:
+
+- `python -m pytest`: `134 passed, 1 xfailed`.
+- `python -m ruff check SDYJ_Agents tests examples`: passed.
+- `python -m build` and `python -m twine check dist/*`: passed.
+- GitHub Pages, Hugging Face Spaces, TestPyPI/PyPI, Docker, and GHCR now have
+  local docs, workflows, or static gates. Real public URLs, packages, and
+  images still require platform-side setup.
+- The public benchmark harness now commits synthetic GAIA-style smoke
+  `summary`, `manifest`, `predictions`, and `graded` artifacts. See
+  [docs/benchmark-results-public.md](docs/benchmark-results-public.md). This is
+  not a GAIA public score; it only proves the runner, grader, and artifact
+  layout are reproducible.
+- The MCP filesystem demo no-secret `--check` passes locally. The GitHub MCP
+  `--check` fails safely without `GITHUB_PERSONAL_ACCESS_TOKEN` and prints only
+  boolean status.
+
+External conditions still required:
+
+- Configure a real `TAVILY_API_KEY`, then rerun the DeepSeek + Tavily + arXiv
+  live smoke and validate it with `inspect-run`, `replay`, and `diff-runs`.
+- Run Docker build/run/compose smoke on a Docker-enabled host.
+- Enable GitHub Pages, create the Hugging Face Space, configure Trusted
+  Publishers, and only then unhide the README badges with verified URLs.
+- Get Hugging Face GAIA dataset access plus real predictions before claiming a
+  GAIA Level 1 slice result.
+
 ## Trace, replay, and inspection
 
 Every run writes a bundle under `outputs/runs/<run-id>/` and a backward-compatible copy at `outputs/traces/<run-id>.json`:
