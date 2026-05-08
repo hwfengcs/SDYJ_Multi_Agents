@@ -128,3 +128,32 @@ Observed results:
 External blocker:
 
 - Full DeepSeek + Tavily + arXiv live research is still blocked until a real `TAVILY_API_KEY` is configured. Continue with local HF Spaces, Pages, packaging, and benchmark preparation.
+
+## 2026-05-08 - Follow-up preflight
+
+- Status: local verification pass; full Tavily live-search smoke remains blocked.
+- Provider/model target: `deepseek` / `deepseek-v4-flash`.
+
+Validation:
+
+```bash
+git status --short --branch
+git log --oneline -12
+sdyj doctor --provider deepseek
+python -m pytest
+python -m ruff check SDYJ_Agents tests examples
+```
+
+Observed results:
+
+- Branch is `feat/v0.6-self-verifying`.
+- Recent local commits include `docs(live): record Tavily smoke blocker`, `test(deploy): cover hosted entrypoints`, `ci(release): add package smoke gates`, and `feat(benchmark): label public smoke artifacts`.
+- `sdyj doctor --provider deepseek` reports a usable DeepSeek key.
+- `sdyj doctor --provider deepseek` reports `TAVILY_API_KEY` as missing for live web search.
+- Local `.env` check found `TAVILY_API_KEY` missing; no secret value was printed or recorded.
+- `python -m pytest`: `114 passed, 1 xfailed`.
+- `python -m ruff check SDYJ_Agents tests examples`: all checks passed.
+
+External blocker:
+
+- Full DeepSeek + Tavily + arXiv live research is still blocked until a real `TAVILY_API_KEY` is configured. Continue with local HF Spaces, Pages, packaging, benchmark, and Docker preparation.
