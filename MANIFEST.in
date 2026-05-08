@@ -3,6 +3,9 @@ include README_EN.md
 include LICENSE
 include requirements.txt
 include environment.yml
+include Dockerfile
+include docker-compose.yml
+include .dockerignore
 include .env.example
 include mcp_config.json.example
 include app.py

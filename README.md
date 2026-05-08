@@ -55,6 +55,16 @@ sdyj research "RAG Agent 如何做可靠性评估？"
 sdyj
 ```
 
+容器快速开始：
+
+```bash
+docker build -t sdyj:0.6 .
+docker run --rm sdyj:0.6 sdyj --help
+docker compose up --build
+```
+
+Docker 与 Compose 部署说明见 [docs/docker.md](docs/docker.md)。
+
 ## 架构概览
 
 ```text

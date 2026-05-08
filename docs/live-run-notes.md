@@ -157,3 +157,25 @@ Observed results:
 External blocker:
 
 - Full DeepSeek + Tavily + arXiv live research is still blocked until a real `TAVILY_API_KEY` is configured. Continue with local HF Spaces, Pages, packaging, benchmark, and Docker preparation.
+
+## 2026-05-08 - Docker packaging preflight
+
+- Status: Docker assets added; local container runtime verification is blocked.
+
+Commands attempted:
+
+```bash
+docker build -t sdyj:0.6 .
+docker run --rm sdyj:0.6 sdyj --help
+```
+
+Observed results:
+
+- Both commands failed before project build/run because `docker` is not installed or not on `PATH` on this machine.
+- Static Docker asset validation passed through `tests/test_docker_assets.py`.
+- Related docs/package tests passed through `tests/test_trace_viewer.py`, `tests/test_version.py`, and `tests/test_package_artifacts.py`.
+- `python -m ruff check tests/test_docker_assets.py`: all checks passed.
+
+Follow-up:
+
+- Rerun the same Docker build and CLI smoke on a Docker-enabled host.

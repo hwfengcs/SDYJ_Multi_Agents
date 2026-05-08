@@ -55,6 +55,16 @@ Run without a query to enter the interactive menu:
 sdyj
 ```
 
+Container quick start:
+
+```bash
+docker build -t sdyj:0.6 .
+docker run --rm sdyj:0.6 sdyj --help
+docker compose up --build
+```
+
+See [docs/docker.md](docs/docker.md) for Docker and Compose deployment notes.
+
 ## Architecture
 
 ```text
