@@ -111,8 +111,10 @@ def run_external_benchmark(
     predictions = _load_predictions(predictions_path) if predictions_path else _baseline_predictions(examples)
     graded = grade_predictions(examples, predictions)
     passed = True
+    fail_under_delta = None
     if fail_under is not None and graded["accuracy"] < fail_under:
         passed = False
+        fail_under_delta = fail_under - graded["accuracy"]
 
     run_id = f"{suite}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     run_dir = Path(output_dir) / "external_benchmarks" / run_id
@@ -141,7 +143,12 @@ def run_external_benchmark(
         "example_count": graded["total"],
         "correct": graded["correct"],
         "accuracy": graded["accuracy"],
+        "prediction_coverage": graded["prediction_coverage"],
+        "missing_prediction_count": graded["missing_prediction_count"],
+        "missing_expected_answer_count": graded["missing_expected_answer_count"],
+        "incorrect_task_ids": graded["incorrect_task_ids"],
         "fail_under": fail_under,
+        "fail_under_delta": fail_under_delta,
         "passed": passed,
         "artifacts": {
             "run_dir": str(run_dir),

@@ -52,24 +52,40 @@ def grade_predictions(
     rows = []
     correct = 0
     total = 0
+    missing_prediction_count = 0
+    missing_expected_answer_count = 0
+    incorrect_task_ids = []
     for example in examples:
         total += 1
         prediction = prediction_by_id.get(example.task_id, "")
+        if not prediction:
+            missing_prediction_count += 1
+        if not example.final_answer:
+            missing_expected_answer_count += 1
         is_correct = is_correct_prediction(prediction, example.final_answer)
         correct += int(is_correct)
+        if not is_correct:
+            incorrect_task_ids.append(example.task_id)
         rows.append(
             {
                 "task_id": example.task_id,
                 "level": example.level,
                 "prediction": prediction,
+                "has_prediction": bool(prediction),
+                "has_expected_answer": bool(example.final_answer),
                 "correct": is_correct,
             }
         )
 
     accuracy = correct / total if total else 0.0
+    prediction_coverage = (total - missing_prediction_count) / total if total else 0.0
     return {
         "total": total,
         "correct": correct,
         "accuracy": accuracy,
+        "prediction_coverage": prediction_coverage,
+        "missing_prediction_count": missing_prediction_count,
+        "missing_expected_answer_count": missing_expected_answer_count,
+        "incorrect_task_ids": incorrect_task_ids,
         "rows": rows,
     }

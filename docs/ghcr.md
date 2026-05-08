@@ -35,7 +35,7 @@ Run runtime checks on a Docker-enabled host:
 ```bash
 docker build -t sdyj:0.6 .
 docker run --rm sdyj:0.6 sdyj --help
-docker run --rm sdyj:0.6 sdyj doctor --provider deepseek
+docker run --rm -e DEEPSEEK_API_KEY=dummy sdyj:0.6 sdyj doctor --provider deepseek
 docker compose run --rm sdyj sdyj --help
 ```
 

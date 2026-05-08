@@ -58,6 +58,16 @@ python examples/mcp_demos/mcp_github_demo.py --token-env GITHUB_PERSONAL_ACCESS_
 Pass `--list-tools` to either script to launch the server through `npx` and
 print the tools exposed to SDYJ.
 
+Run `--check` first. The checks print only boolean prerequisite status, never
+secret values:
+
+| Demo | `--check` behavior |
+| --- | --- |
+| Filesystem | Returns `0` when `npx` and the Python `mcp` SDK are available. |
+| GitHub | Returns non-zero until the configured token variable, usually `GITHUB_PERSONAL_ACCESS_TOKEN`, is present. |
+
+Do not run the GitHub `--list-tools` command until the GitHub check is green.
+
 `--check` verifies local prerequisites without launching a server. For the
 filesystem server, the demo prints:
 

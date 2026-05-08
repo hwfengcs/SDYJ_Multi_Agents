@@ -229,3 +229,86 @@ External blockers:
   and verified public URLs before badges should be unhidden.
 - GHCR image publishing still requires an explicit manual workflow run with
   maintainer approval; no image was pushed in this local batch.
+
+## 2026-05-08 - GAIA / Hugging Face access preflight
+
+- Status: real public GAIA score remains blocked; no score is claimed.
+- Target suite: GAIA Level 1 via `gaia-benchmark/GAIA`.
+
+Planned command once Hugging Face login and dataset access are confirmed:
+
+```bash
+sdyj benchmark external \
+  --suite gaia \
+  --source hf \
+  --hf-dataset gaia-benchmark/GAIA \
+  --hf-config 2023_level1 \
+  --split validation \
+  --limit 5 \
+  --predictions outputs/gaia_predictions.jsonl \
+  --output-dir outputs/public_benchmarks
+```
+
+Current local fallback:
+
+```bash
+sdyj benchmark external --suite gaia --source local --limit 3 --output-dir outputs/public_benchmarks --fail-under 1.0
+```
+
+Observed results:
+
+- Synthetic GAIA-style smoke remains a harness/artifact-layout check only.
+- Latest local smoke run id: `gaia_20260508_120004`; accuracy `1.0000`,
+  prediction coverage `1.0000`, missing predictions `0`.
+- Offline benchmark gate with determinism repeats passed:
+  `outputs/verify_benchmark_gate/eval_reports/eval_summary_20260508_115841.json`.
+- The committed smoke artifact set now includes summary, manifest,
+  predictions, and graded JSONL rows under `docs/public-benchmark-artifacts/`.
+- Real GAIA validation/test access still requires Hugging Face login and any
+  dataset access/terms confirmation. No Hugging Face token was read, printed,
+  or recorded.
+
+## 2026-05-08 - MCP no-secret check matrix
+
+- Status: filesystem prerequisite check passes; GitHub prerequisite check is
+  blocked by missing token and fails safely.
+
+Commands:
+
+```bash
+python examples/mcp_demos/mcp_filesystem_demo.py --root . --check
+python examples/mcp_demos/mcp_github_demo.py --token-env GITHUB_PERSONAL_ACCESS_TOKEN --check
+```
+
+Observed results:
+
+- Filesystem check returned `npx=true` and `mcp_python_sdk=true`.
+- GitHub check returned non-zero with `GITHUB_PERSONAL_ACCESS_TOKEN=false`.
+- The GitHub check printed only boolean prerequisite status; no token value was
+  read from `.env`, printed, or recorded.
+
+Follow-up:
+
+- Do not run GitHub `--list-tools` until
+  `GITHUB_PERSONAL_ACCESS_TOKEN` is configured in the environment.
+
+## 2026-05-08 - Docker smoke command correction
+
+- Status: local Docker runtime remains blocked because `docker` is not
+  installed or not on `PATH`.
+- Documentation now uses a dummy-key no-network doctor smoke command:
+
+```bash
+docker run --rm -e DEEPSEEK_API_KEY=dummy sdyj:0.6 sdyj doctor --provider deepseek
+```
+
+Follow-up on a Docker-enabled host:
+
+```bash
+docker build -t sdyj:0.6 .
+docker build --build-arg SDYJ_EXTRAS=all -t sdyj:0.6-all .
+docker run --rm sdyj:0.6 sdyj --help
+docker run --rm -e DEEPSEEK_API_KEY=dummy sdyj:0.6 sdyj doctor --provider deepseek
+docker compose config
+docker compose run --rm sdyj sdyj --help
+```

@@ -29,3 +29,16 @@ python examples/mcp_demos/mcp_github_demo.py --list-tools
 Both demos use `npx` and official MCP server packages, so Node.js must be
 available when you pass `--list-tools`. `--check` only verifies local
 prerequisites and does not launch a server.
+
+## No-secret check matrix
+
+Run `--check` before `--list-tools`:
+
+| Demo | Command | Expected without secrets |
+| --- | --- | --- |
+| Filesystem | `python examples/mcp_demos/mcp_filesystem_demo.py --root . --check` | Exits `0` when `npx` and the Python `mcp` package are available; prints only booleans. |
+| GitHub | `python examples/mcp_demos/mcp_github_demo.py --token-env GITHUB_PERSONAL_ACCESS_TOKEN --check` | Exits non-zero until the token environment variable is present; prints only booleans such as `"GITHUB_PERSONAL_ACCESS_TOKEN": false`. |
+
+Do not run GitHub `--list-tools` until `--check` is green. The scripts never
+print token values; they only report whether the configured token variable is
+present.

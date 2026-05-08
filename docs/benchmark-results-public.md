@@ -12,11 +12,16 @@ local smoke tests.
 | GAIA Level 1 | Hugging Face `gaia-benchmark/GAIA` | 5 | blocked until HF login / dataset access is confirmed | not claimed |
 | AssistantBench | public slice TBD | TBD | not started | not claimed |
 
-Latest local smoke run: `gaia_20260503_124856`.
+Latest local smoke run: `gaia_20260508_120004`.
 
-Committed smoke summary: [`docs/public-benchmark-artifacts/gaia-smoke-summary.json`](public-benchmark-artifacts/gaia-smoke-summary.json).
+Committed smoke artifacts:
 
-Local full artifact path: `outputs/public_benchmarks/external_benchmarks/gaia_20260503_124856/summary.json`.
+- [`summary.json`](public-benchmark-artifacts/gaia-smoke-summary.json)
+- [`manifest.jsonl`](public-benchmark-artifacts/gaia-smoke-manifest.jsonl)
+- [`predictions.jsonl`](public-benchmark-artifacts/gaia-smoke-predictions.jsonl)
+- [`graded.jsonl`](public-benchmark-artifacts/gaia-smoke-graded.jsonl)
+
+Local full artifact path: `outputs/public_benchmarks/external_benchmarks/gaia_20260508_120004/summary.json`.
 
 ## Reproducible Smoke Command
 
@@ -46,7 +51,7 @@ sdyj benchmark run --max-scenarios 1 --max-iterations 2 --fail-under 0.75 --outp
 ```
 
 Result: average score `1.0000`, passed. Summary:
-`outputs/verify_benchmark_gate/eval_reports/eval_summary_20260503_124856.json`.
+`outputs/verify_benchmark_gate/eval_reports/eval_summary_20260508_115841.json`.
 
 ## Real GAIA Slice
 
@@ -71,3 +76,9 @@ Acceptance criteria before claiming a public score:
 - `summary.json`, `graded.jsonl`, and run configuration are archived;
 - failure cases are summarized, not hidden;
 - dataset access constraints are documented in `docs/live-run-notes.md`.
+
+Use [`docs/benchmark-failure-analysis-template.md`](benchmark-failure-analysis-template.md)
+for every failed threshold, incomplete prediction file, or external blocker.
+The summary fields `prediction_coverage`, `missing_prediction_count`,
+`missing_expected_answer_count`, `incorrect_task_ids`, and `fail_under_delta`
+exist so public benchmark claims can be audited without rerunning the suite.

@@ -109,11 +109,19 @@ Each run writes:
 - `predictions.jsonl`, either imported from `--predictions` or generated from
   fixture baseline predictions;
 - `graded.jsonl` with per-task correctness;
-- `summary.json` with accuracy, pass/fail status, and artifact paths.
+- `summary.json` with accuracy, prediction coverage, missing prediction count,
+  missing expected-answer count, incorrect task ids, fail-under delta,
+  pass/fail status, and artifact paths.
 
 Real GAIA validation/test data may be gated. If Hugging Face access is missing,
 record that blocker in `docs/live-run-notes.md` and use `--source local` or
 `--source jsonl` to keep the harness itself tested.
+
+When a public or external run fails, fill out
+[`docs/benchmark-failure-analysis-template.md`](benchmark-failure-analysis-template.md)
+and link it from the result notes. The goal is to make missing predictions,
+dataset access issues, retrieval drift, and actual model/agent failures
+distinguishable.
 
 ## Current Scenarios
 

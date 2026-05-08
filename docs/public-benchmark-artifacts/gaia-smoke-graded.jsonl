@@ -1,0 +1,3 @@
+{"task_id": "gaia-mini-001", "level": 1, "prediction": "Mars", "has_prediction": true, "has_expected_answer": true, "correct": true}
+{"task_id": "gaia-mini-002", "level": 1, "prediction": "H2O", "has_prediction": true, "has_expected_answer": true, "correct": true}
+{"task_id": "gaia-mini-003", "level": 1, "prediction": "12", "has_prediction": true, "has_expected_answer": true, "correct": true}

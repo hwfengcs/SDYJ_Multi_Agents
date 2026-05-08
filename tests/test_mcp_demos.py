@@ -1,5 +1,6 @@
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 
@@ -59,3 +60,28 @@ def test_filesystem_demo_check_does_not_launch_server():
 
     assert '"npx"' in result.stdout
     assert '"mcp_python_sdk"' in result.stdout
+
+
+def test_github_demo_check_without_token_is_no_secret_failure():
+    env = os.environ.copy()
+    env.pop("GITHUB_PERSONAL_ACCESS_TOKEN", None)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "examples" / "mcp_demos" / "mcp_github_demo.py"),
+            "--token-env",
+            "GITHUB_PERSONAL_ACCESS_TOKEN",
+            "--check",
+        ],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert '"GITHUB_PERSONAL_ACCESS_TOKEN": false' in result.stdout
+    assert "ghp_" not in result.stdout
+    assert "github_pat_" not in result.stdout

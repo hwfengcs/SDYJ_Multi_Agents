@@ -60,7 +60,10 @@ def test_docker_docs_and_manifest_are_linked():
     manifest = _read("MANIFEST.in")
 
     assert "docker build -t sdyj:0.6 ." in docs
+    assert "docker build --build-arg SDYJ_EXTRAS=all -t sdyj:0.6-all ." in docs
     assert "docker compose up --build" in docs
+    assert "docker run --rm -e DEEPSEEK_API_KEY=dummy sdyj:0.6 sdyj doctor --provider deepseek" in docs
+    assert "docker compose config" in docs
     assert "docker.md" in index
     assert "include Dockerfile" in manifest
     assert "include docker-compose.yml" in manifest
