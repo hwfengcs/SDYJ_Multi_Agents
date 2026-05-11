@@ -73,6 +73,7 @@ Shipped in 0.6.0a1 and the current v0.6 branch:
 - [x] `sdyj doctor` no-network environment preflight for local and hosted runs.
 - [x] `sdyj release-check` / `scripts/release_readiness.py` one-command local release preflight.
 - [x] Benchmark failure-analysis artifacts for internal threshold failures and external GAIA-style predictions.
+- [x] Research-grade benchmark comparison analysis with per-metric deltas, context changes, missing/new scenarios, and root-cause rollups.
 - [x] MCP demo scripts for filesystem and GitHub servers.
 - [x] GitHub Pages workflow for publishing docs + static Trace Viewer.
 

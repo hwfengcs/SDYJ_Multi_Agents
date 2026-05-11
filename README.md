@@ -116,19 +116,20 @@ Trace v2 bundle → outputs/runs/<run-id>/
 
 完整 v0.6 计划见 [`docs/release-notes/v0.6.md`](docs/release-notes/v0.6.md) 与 [ROADMAP.md](ROADMAP.md)。
 
-## v0.6 发布准备快照（2026-05-08）
+## v0.6 发布准备快照（2026-05-11）
 
 本地可验证的发布准备已经基本收口：
 
 - 最新真实 provider、benchmark、Docker 与 hosted demo 状态以
   [docs/live-run-notes.md](docs/live-run-notes.md) 为准；这里仅是
   release-readiness 快照。
-- `python -m pytest`：`142 passed, 1 xfailed`。
+- `python -m pytest`：`145 passed, 1 xfailed`。
 - `python -m ruff check SDYJ_Agents tests examples`：通过。
 - `python -m build` 与 `python -m twine check dist/*`：通过。
 - 新增 `sdyj release-check` / `python scripts/release_readiness.py`，可一键汇总 doctor、pytest、ruff、build、twine、benchmark 与 MCP 本地预检；外部缺口只报告为 blocker，不打印 secret，也不发布任何资产。
 - GitHub Pages、Hugging Face Spaces、TestPyPI/PyPI、Docker/GHCR 都已有本地文档、workflow 或静态 gate；真实 URL / 包 / 镜像发布仍等待平台侧操作。
 - 公开 benchmark harness 已提交 synthetic GAIA-style smoke 的 `summary` / `manifest` / `predictions` / `graded` / failure-analysis artifacts，见 [docs/benchmark-results-public.md](docs/benchmark-results-public.md)。这不是 GAIA 公共分数，只证明 runner、grader、failure analysis 与 artifact layout 可复现。
+- Benchmark comparison 已增强为 per-metric regression analysis，可记录缺失/新增场景、feature flag 变化、root-cause rollup 与 top regressions/improvements。
 - MCP filesystem demo 的 no-secret `--check` 已通过；GitHub MCP `--check` 在无 `GITHUB_PERSONAL_ACCESS_TOKEN` 时会安全失败且只输出布尔状态。
 
 仍需外部条件后才能完成的事项：
@@ -165,7 +166,12 @@ sdyj list-scenarios
 sdyj benchmark run --max-scenarios 1 --max-iterations 2
 sdyj benchmark run --fail-under 0.75            # CI 回归 gate
 sdyj benchmark run --determinism-repeats 2      # 离线 determinism 检查
+sdyj benchmark run --compare-summary outputs/eval_reports/eval_summary_YYYYMMDD_HHMMSS.json
 ```
+
+`--compare-summary` 与 `sdyj benchmark compare` 会检查关键 per-metric
+回退、缺失场景、feature flag 变化，并输出 root-cause rollup，避免 aggregate
+score 持平时漏掉 citation、tool 或 trace 维度的退化。
 
 真实 DeepSeek 评测把模型推理与确定性检索分开：
 

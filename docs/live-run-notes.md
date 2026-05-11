@@ -457,3 +457,69 @@ External blockers remain unchanged: real GAIA Level 1 still requires Hugging
 Face login / dataset access and real predictions; Tavily live research still
 requires `TAVILY_API_KEY`; Docker runtime smoke still requires a Docker-enabled
 host.
+
+## 2026-05-11 - Benchmark regression-analysis artifacts
+
+- Status: local benchmark comparison auditability improved; external blockers
+  remain unchanged.
+- Environment preflight:
+  - Branch: `feat/v0.6-self-verifying`.
+  - Latest commit before this batch: `4facae3 feat(benchmark): add failure analysis artifacts`.
+  - `sdyj doctor --provider deepseek`: DeepSeek key present, Tavily missing,
+    MCP source not configured.
+  - Local `.env` check: `TAVILY_API_KEY=missing`; no secret value was printed or
+    recorded.
+  - `python -m pytest`: `142 passed, 1 xfailed`.
+  - `python -m ruff check SDYJ_Agents tests examples`: all checks passed.
+
+Scope:
+
+- `sdyj benchmark run --compare-summary` and `sdyj benchmark compare` now write
+  `comparison.regression_analysis` with:
+  - compared / new / missing scenario counts;
+  - feature/context changes such as verifier, reflection, plan refinement, and
+    parallel-tool flags;
+  - per-metric mean deltas, regression counts, improvement counts, and mapped
+    root causes;
+  - top metric regressions and improvements.
+- Missing baseline scenarios now fail the comparison gate instead of being
+  silently ignored.
+- `sdyj benchmark compare --json` now writes raw stdout JSON so long Windows
+  paths remain machine-parseable.
+
+Validation:
+
+```bash
+python -m pytest tests/test_evaluation.py tests/test_cli.py
+# 19 passed
+
+python -m ruff check SDYJ_Agents\evaluation\runner.py SDYJ_Agents\cli\main.py tests\test_evaluation.py tests\test_cli.py
+# All checks passed
+
+sdyj benchmark run --scenario agent_reliability_hard --max-iterations 2 --output-dir outputs\compare_analysis_smoke_baseline
+sdyj benchmark run --scenario agent_reliability_hard --max-iterations 2 --output-dir outputs\compare_analysis_smoke_candidate --compare-summary <baseline-summary>
+sdyj benchmark compare <baseline-summary> <candidate-summary> --json
+# JSON parsed with python -m json.tool; comparison_passed=True, metric_regressions=0, missing_scenarios=0
+
+python -m pytest
+# 145 passed, 1 xfailed
+
+python -m ruff check SDYJ_Agents tests examples
+# All checks passed
+
+python -m build
+# built sdyj_multi_agents-0.6.0a1.tar.gz and sdyj_multi_agents-0.6.0a1-py3-none-any.whl
+
+python -m twine check dist/*
+# PASSED
+```
+
+External blockers remain unchanged:
+
+- `TAVILY_API_KEY` is still missing, so full DeepSeek + Tavily + arXiv live
+  research was not run.
+- Real GAIA Level 1 still requires Hugging Face login / dataset access and real
+  predictions.
+- Docker runtime smoke still requires a Docker-enabled host.
+- HF Spaces / GitHub Pages / GHCR / TestPyPI / PyPI still require platform-side
+  setup or manual workflow execution.

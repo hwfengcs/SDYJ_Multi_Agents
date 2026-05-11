@@ -39,6 +39,20 @@ REGRESSION_METRIC_KEYS = [
     "trace_completeness",
 ]
 
+REGRESSION_DELTA_THRESHOLD = -0.02
+IMPROVEMENT_DELTA_THRESHOLD = 0.02
+
+SUMMARY_CONTEXT_KEYS = [
+    "mode",
+    "provider",
+    "model",
+    "live_search",
+    "enable_verification",
+    "enable_reflection",
+    "enable_plan_refinement",
+    "enable_parallel_tool_execution",
+]
+
 
 def _metric_root_cause(metric: str) -> str:
     if metric == "plan_coverage":
@@ -58,6 +72,34 @@ def _metric_root_cause(metric: str) -> str:
     if metric.startswith("verifier_") or metric == "revision_count":
         return "verifier_gap"
     return "aggregate_quality_gap"
+
+
+def _numeric(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _round_delta(value: float | None) -> float | None:
+    if value is None:
+        return None
+    return round(value, 4)
+
+
+def _summary_context_changes(current: Dict[str, Any], baseline: Dict[str, Any]) -> list[Dict[str, Any]]:
+    changes = []
+    for key in SUMMARY_CONTEXT_KEYS:
+        if baseline.get(key) != current.get(key):
+            changes.append(
+                {
+                    "key": key,
+                    "baseline": baseline.get(key),
+                    "current": current.get(key),
+                }
+            )
+    return changes
 
 
 def _scenario_failure_analysis(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -457,51 +499,153 @@ def _stable_result_fingerprint(result: Dict[str, Any]) -> Dict[str, Any]:
 def _compare_summaries(current: Dict[str, Any], baseline: Dict[str, Any]) -> Dict[str, Any]:
     """Compare current benchmark summary against a saved baseline summary."""
     baseline_by_id = {item["scenario_id"]: item for item in baseline.get("results", [])}
+    current_by_id = {item["scenario_id"]: item for item in current.get("results", [])}
     rows = []
     regressions = []
+    new_scenarios = []
+    missing_scenarios = []
+    metric_delta_totals: dict[str, float] = {}
+    metric_delta_counts: Counter[str] = Counter()
+    metric_regression_counts: Counter[str] = Counter()
+    metric_improvement_counts: Counter[str] = Counter()
+    root_cause_counts: Counter[str] = Counter()
+    top_metric_regressions = []
+    top_metric_improvements = []
+
     for item in current.get("results", []):
         scenario_id = item["scenario_id"]
         old = baseline_by_id.get(scenario_id)
         if not old:
-            rows.append({"scenario_id": scenario_id, "status": "new"})
+            row = {
+                "scenario_id": scenario_id,
+                "status": "new",
+                "baseline_score": None,
+                "current_score": item.get("metrics", {}).get("overall_score"),
+                "delta": None,
+                "metric_deltas": [],
+                "metric_regressions": [],
+                "metric_improvements": [],
+                "regressed": False,
+            }
+            rows.append(row)
+            new_scenarios.append(scenario_id)
             continue
-        old_score = old.get("metrics", {}).get("overall_score", 0.0)
-        new_score = item.get("metrics", {}).get("overall_score", 0.0)
-        delta = round(new_score - old_score, 4)
+        old_score = _numeric(old.get("metrics", {}).get("overall_score")) or 0.0
+        new_score = _numeric(item.get("metrics", {}).get("overall_score")) or 0.0
+        delta = _round_delta(new_score - old_score)
+        metric_deltas = []
         metric_regressions = []
+        metric_improvements = []
         for metric in REGRESSION_METRIC_KEYS:
-            old_metric = old.get("metrics", {}).get(metric)
-            new_metric = item.get("metrics", {}).get(metric)
-            if not isinstance(old_metric, (int, float)) or not isinstance(new_metric, (int, float)):
+            old_metric = _numeric(old.get("metrics", {}).get(metric))
+            new_metric = _numeric(item.get("metrics", {}).get(metric))
+            if old_metric is None or new_metric is None:
                 continue
-            metric_delta = round(new_metric - old_metric, 4)
-            if metric_delta < -0.02:
-                metric_regressions.append(
-                    {
-                        "metric": metric,
-                        "baseline": old_metric,
-                        "current": new_metric,
-                        "delta": metric_delta,
-                        "root_cause": _metric_root_cause(metric),
-                    }
-                )
+            metric_delta = _round_delta(new_metric - old_metric)
+            root_cause = _metric_root_cause(metric)
+            metric_deltas.append(
+                {
+                    "metric": metric,
+                    "baseline": old_metric,
+                    "current": new_metric,
+                    "delta": metric_delta,
+                    "root_cause": root_cause,
+                }
+            )
+            metric_delta_totals[metric] = metric_delta_totals.get(metric, 0.0) + (metric_delta or 0.0)
+            metric_delta_counts[metric] += 1
+            if metric_delta is not None and metric_delta < REGRESSION_DELTA_THRESHOLD:
+                regression = {
+                    "scenario_id": scenario_id,
+                    "metric": metric,
+                    "baseline": old_metric,
+                    "current": new_metric,
+                    "delta": metric_delta,
+                    "root_cause": root_cause,
+                }
+                metric_regressions.append(regression)
+                top_metric_regressions.append(regression)
+                metric_regression_counts[metric] += 1
+                root_cause_counts[root_cause] += 1
+            elif metric_delta is not None and metric_delta > IMPROVEMENT_DELTA_THRESHOLD:
+                improvement = {
+                    "scenario_id": scenario_id,
+                    "metric": metric,
+                    "baseline": old_metric,
+                    "current": new_metric,
+                    "delta": metric_delta,
+                    "root_cause": root_cause,
+                }
+                metric_improvements.append(improvement)
+                top_metric_improvements.append(improvement)
+                metric_improvement_counts[metric] += 1
         row = {
             "scenario_id": scenario_id,
             "baseline_score": old_score,
             "current_score": new_score,
             "delta": delta,
+            "metric_deltas": metric_deltas,
             "metric_regressions": metric_regressions,
-            "regressed": delta < -0.02 or bool(metric_regressions),
+            "metric_improvements": metric_improvements,
+            "regressed": (delta is not None and delta < REGRESSION_DELTA_THRESHOLD) or bool(metric_regressions),
         }
         rows.append(row)
         if row["regressed"]:
             regressions.append(row)
+
+    for scenario_id in sorted(set(baseline_by_id) - set(current_by_id)):
+        missing_scenarios.append(scenario_id)
+        rows.append(
+            {
+                "scenario_id": scenario_id,
+                "status": "missing",
+                "baseline_score": baseline_by_id[scenario_id].get("metrics", {}).get("overall_score"),
+                "current_score": None,
+                "delta": None,
+                "metric_deltas": [],
+                "metric_regressions": [],
+                "metric_improvements": [],
+                "regressed": True,
+            }
+        )
+
+    root_cause_counts["missing_scenario"] += len(missing_scenarios)
+    metric_delta_summary = {}
+    for metric in REGRESSION_METRIC_KEYS:
+        count = metric_delta_counts.get(metric, 0)
+        if not count:
+            continue
+        metric_delta_summary[metric] = {
+            "mean_delta": round(metric_delta_totals[metric] / count, 4),
+            "compared_scenario_count": count,
+            "regression_count": metric_regression_counts.get(metric, 0),
+            "improvement_count": metric_improvement_counts.get(metric, 0),
+            "root_cause": _metric_root_cause(metric),
+        }
+
+    top_metric_regressions = sorted(top_metric_regressions, key=lambda row: row["delta"])[:5]
+    top_metric_improvements = sorted(top_metric_improvements, key=lambda row: row["delta"], reverse=True)[:5]
+
+    regression_analysis = {
+        "compared_scenario_count": len(set(baseline_by_id) & set(current_by_id)),
+        "new_scenarios": new_scenarios,
+        "missing_scenarios": missing_scenarios,
+        "context_changes": _summary_context_changes(current, baseline),
+        "metric_delta_summary": metric_delta_summary,
+        "root_cause_counts": {key: value for key, value in root_cause_counts.items() if value},
+        "top_metric_regressions": top_metric_regressions,
+        "top_metric_improvements": top_metric_improvements,
+    }
+
     return {
         "baseline_path": baseline.get("summary_path"),
         "rows": rows,
         "regressions": regressions,
+        "regression_analysis": regression_analysis,
         "metric_regression_count": sum(len(row.get("metric_regressions", [])) for row in regressions),
-        "passed": not regressions,
+        "missing_scenario_count": len(missing_scenarios),
+        "new_scenario_count": len(new_scenarios),
+        "passed": not regressions and not missing_scenarios,
     }
 
 

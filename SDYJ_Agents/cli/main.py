@@ -1044,11 +1044,14 @@ def compare_benchmark_summaries(
             "baseline_average": baseline.get("average_score"),
             "candidate_average": candidate.get("average_score"),
             "rows": rows,
+            "regression_analysis": comparison.get("regression_analysis", {}),
             "metric_regression_count": comparison.get("metric_regression_count", 0),
+            "missing_scenario_count": comparison.get("missing_scenario_count", 0),
+            "new_scenario_count": comparison.get("new_scenario_count", 0),
             "passed": comparison["passed"],
         }
         if as_json:
-            console.print(json.dumps(payload, indent=2, ensure_ascii=False))
+            sys.stdout.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
             return 0 if payload["passed"] else 3
 
         table = Table(title="Benchmark Summary Diff")
@@ -1058,14 +1061,29 @@ def compare_benchmark_summaries(
         table.add_column("Delta", justify="right")
         table.add_column("Status")
         for row in rows:
+            status = row.get("status")
+            if status == "new":
+                status_text = "new"
+            elif status == "missing":
+                status_text = "MISSING"
+            else:
+                status_text = "REGRESSION" if row.get("regressed") else "ok"
             table.add_row(
                 row["scenario_id"],
-                str(row["baseline_score"]),
-                str(row["candidate_score"]),
-                str(row["delta"]),
-                "REGRESSION" if row["regressed"] else "ok",
+                "n/a" if row.get("baseline_score") is None else str(row["baseline_score"]),
+                "n/a" if row.get("candidate_score") is None else str(row["candidate_score"]),
+                "n/a" if row.get("delta") is None else str(row["delta"]),
+                status_text,
             )
         console.print(table)
+        analysis = comparison.get("regression_analysis") or {}
+        if analysis.get("root_cause_counts"):
+            root_table = Table(title="Regression Root Causes")
+            root_table.add_column("Root Cause")
+            root_table.add_column("Count", justify="right")
+            for cause, count in analysis["root_cause_counts"].items():
+                root_table.add_row(str(cause), str(count))
+            console.print(root_table)
         return 0 if payload["passed"] else 3
     except Exception as e:
         error_console.print(f"[red][ERR] Benchmark compare 失败：{e}[/red]")
@@ -1166,10 +1184,28 @@ def execute_evaluation(args: argparse.Namespace) -> int:
                 console.print(f"[dim]report: {item['report_path']}[/dim]")
             if item.get("trace_path"):
                 console.print(f"[dim]trace: {item['trace_path']}[/dim]")
+        comparison = summary.get("comparison")
+        if comparison:
+            analysis = comparison.get("regression_analysis") or {}
+            console.print(
+                "[green][OK] comparison: "
+                f"compared={analysis.get('compared_scenario_count', 0)}, "
+                f"metric_regressions={comparison.get('metric_regression_count', 0)}, "
+                f"missing_scenarios={comparison.get('missing_scenario_count', 0)}[/green]"
+            )
+            if analysis.get("root_cause_counts"):
+                console.print(f"[yellow]comparison root causes: {analysis['root_cause_counts']}[/yellow]")
         if not summary.get("passed", True):
             console.print("[red][FAIL] Benchmark gate 未通过[/red]")
             for failed in summary.get("failed_scenarios", []):
                 console.print(f"[red]- {failed['scenario_id']}: {failed['failed_thresholds']}[/red]")
+            comparison = summary.get("comparison")
+            if comparison and not comparison.get("passed", True):
+                analysis = comparison.get("regression_analysis") or {}
+                for row in comparison.get("regressions", []):
+                    console.print(f"[red]- comparison regression {row['scenario_id']}: {row['metric_regressions']}[/red]")
+                for scenario_id in analysis.get("missing_scenarios", []):
+                    console.print(f"[red]- comparison missing scenario: {scenario_id}[/red]")
             return 3
         return 0
     except Exception as e:

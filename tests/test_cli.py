@@ -41,7 +41,18 @@ def test_parse_utility_commands_without_api_key():
         "--enable-refine-plan",
         "--enable-parallel-tools",
     ])
-    benchmark_args = parse_args(["benchmark", "run", "--fail-under", "0.7", "--determinism-repeats", "2"])
+    benchmark_args = parse_args(
+        [
+            "benchmark",
+            "run",
+            "--fail-under",
+            "0.7",
+            "--determinism-repeats",
+            "2",
+            "--compare-summary",
+            "baseline.json",
+        ]
+    )
     benchmark_external = parse_args(["benchmark", "external", "--suite", "gaia", "--limit", "2"])
     benchmark_compare = parse_args(["benchmark", "compare", "baseline.json", "candidate.json", "--json"])
     replay_args = parse_args(["replay", "abc123"])
@@ -64,6 +75,7 @@ def test_parse_utility_commands_without_api_key():
     assert benchmark_args.command == "eval"
     assert benchmark_args.fail_under == 0.7
     assert benchmark_args.determinism_repeats == 2
+    assert benchmark_args.compare_summary == "baseline.json"
     assert benchmark_external.command == "benchmark-external"
     assert benchmark_external.suite == "gaia"
     assert benchmark_external.limit == 2
@@ -202,6 +214,35 @@ def test_benchmark_compare_cli_flags_metric_regression(tmp_path):
     exit_code = cli_main.main(["benchmark", "compare", str(baseline), str(candidate), "--json"])
 
     assert exit_code == 3
+
+
+def test_benchmark_compare_cli_payload_includes_regression_analysis(tmp_path, capsys):
+    from SDYJ_Agents.cli import main as cli_main
+
+    baseline = tmp_path / "baseline.json"
+    candidate = tmp_path / "candidate.json"
+    baseline.write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "scenario_id": "agent_reliability_hard",
+                        "metrics": {"overall_score": 1.0, "trace_completeness": 1.0},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    candidate.write_text(json.dumps({"results": []}), encoding="utf-8")
+
+    exit_code = cli_main.main(["benchmark", "compare", str(baseline), str(candidate), "--json"])
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+
+    assert exit_code == 3
+    assert payload["missing_scenario_count"] == 1
+    assert payload["regression_analysis"]["root_cause_counts"] == {"missing_scenario": 1}
 
 
 def test_release_check_cli_dry_run_does_not_require_api_key(monkeypatch):

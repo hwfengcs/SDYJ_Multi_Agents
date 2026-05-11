@@ -53,19 +53,29 @@ def test_threshold_overrides_report_failed_metric(tmp_path):
 def test_compare_summary_flags_metric_regression():
     comparison = compare_evaluation_summaries(
         current={
+            "enable_verification": True,
             "results": [
                 {
                     "scenario_id": "agent_reliability_hard",
-                    "metrics": {"overall_score": 1.0, "citation_id_coverage": 0.5},
+                    "metrics": {
+                        "overall_score": 1.0,
+                        "citation_id_coverage": 0.5,
+                        "tool_success_rate": 1.0,
+                    },
                 }
             ]
         },
         baseline={
             "summary_path": "baseline.json",
+            "enable_verification": False,
             "results": [
                 {
                     "scenario_id": "agent_reliability_hard",
-                    "metrics": {"overall_score": 1.0, "citation_id_coverage": 1.0},
+                    "metrics": {
+                        "overall_score": 1.0,
+                        "citation_id_coverage": 1.0,
+                        "tool_success_rate": 0.5,
+                    },
                 }
             ],
         },
@@ -76,6 +86,53 @@ def test_compare_summary_flags_metric_regression():
     regression = comparison["rows"][0]["metric_regressions"][0]
     assert regression["metric"] == "citation_id_coverage"
     assert regression["root_cause"] == "citation_gap"
+    analysis = comparison["regression_analysis"]
+    assert analysis["context_changes"] == [
+        {"key": "enable_verification", "baseline": False, "current": True}
+    ]
+    assert analysis["root_cause_counts"] == {"citation_gap": 1}
+    assert analysis["metric_delta_summary"]["citation_id_coverage"]["mean_delta"] == -0.5
+    assert analysis["metric_delta_summary"]["tool_success_rate"]["improvement_count"] == 1
+    assert analysis["top_metric_regressions"][0]["scenario_id"] == "agent_reliability_hard"
+    assert analysis["top_metric_improvements"][0]["metric"] == "tool_success_rate"
+
+
+def test_compare_summary_flags_missing_scenario():
+    comparison = compare_evaluation_summaries(
+        current={"results": []},
+        baseline={
+            "results": [
+                {
+                    "scenario_id": "agent_reliability_hard",
+                    "metrics": {"overall_score": 1.0},
+                }
+            ],
+        },
+    )
+
+    assert comparison["passed"] is False
+    assert comparison["missing_scenario_count"] == 1
+    assert comparison["rows"][0]["status"] == "missing"
+    assert comparison["regression_analysis"]["root_cause_counts"] == {"missing_scenario": 1}
+
+
+def test_run_evaluation_writes_comparison_analysis(tmp_path):
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        '{"results":[{"scenario_id":"agent_reliability_hard","metrics":{"overall_score":1.0,"trace_completeness":1.0}}]}',
+        encoding="utf-8",
+    )
+
+    summary = run_evaluation(
+        live=False,
+        scenario_ids=["agent_reliability_hard"],
+        output_dir=str(tmp_path),
+        max_iterations=2,
+        compare_summary_path=str(baseline),
+    )
+
+    assert summary["comparison"]["regression_analysis"]["compared_scenario_count"] == 1
+    assert "trace_completeness" in summary["comparison"]["regression_analysis"]["metric_delta_summary"]
 
 
 def test_trace_completeness_scores_required_fields():

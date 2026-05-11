@@ -116,14 +116,14 @@ See [docs/architecture.md](docs/architecture.md) for the full design notes.
 
 The full v0.6 plan lives in [`docs/release-notes/v0.6.md`](docs/release-notes/v0.6.md) and [ROADMAP.md](ROADMAP.md).
 
-## v0.6 release-readiness snapshot (2026-05-08)
+## v0.6 release-readiness snapshot (2026-05-11)
 
 The locally verifiable release work is mostly closed down:
 
 - Latest live-provider, benchmark, Docker, and hosted-demo status is tracked in
   [docs/live-run-notes.md](docs/live-run-notes.md); this README is only a
   release-readiness snapshot.
-- `python -m pytest`: `142 passed, 1 xfailed`.
+- `python -m pytest`: `145 passed, 1 xfailed`.
 - `python -m ruff check SDYJ_Agents tests examples`: passed.
 - `python -m build` and `python -m twine check dist/*`: passed.
 - `sdyj release-check` / `python scripts/release_readiness.py` now bundles
@@ -139,6 +139,9 @@ The locally verifiable release work is mostly closed down:
   [docs/benchmark-results-public.md](docs/benchmark-results-public.md). This is
   not a GAIA public score; it only proves the runner, grader, and artifact
   layout are reproducible.
+- Benchmark comparison now includes per-metric regression analysis with
+  missing/new scenarios, feature-flag changes, root-cause rollups, and top
+  regressions/improvements.
 - The MCP filesystem demo no-secret `--check` passes locally. The GitHub MCP
   `--check` fails safely without `GITHUB_PERSONAL_ACCESS_TOKEN` and prints only
   boolean status.
@@ -180,7 +183,12 @@ sdyj list-scenarios
 sdyj benchmark run --max-scenarios 1 --max-iterations 2
 sdyj benchmark run --fail-under 0.75            # gate for CI regression blocking
 sdyj benchmark run --determinism-repeats 2      # offline determinism check
+sdyj benchmark run --compare-summary outputs/eval_reports/eval_summary_YYYYMMDD_HHMMSS.json
 ```
+
+`--compare-summary` and `sdyj benchmark compare` inspect key per-metric
+regressions, missing scenarios, feature-flag changes, and root-cause rollups, so
+a flat aggregate score cannot hide citation, tool, or trace degradation.
 
 Live DeepSeek evaluation isolates model quality while keeping retrieval canned for reproducibility:
 

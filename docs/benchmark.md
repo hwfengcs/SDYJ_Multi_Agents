@@ -42,6 +42,20 @@ sdyj benchmark run --compare-summary outputs/eval_reports/eval_summary_YYYYMMDD_
 sdyj benchmark compare baseline.json candidate.json
 ```
 
+Comparison is metric-aware. It checks the dashboard score and the key
+per-metric slices (`plan_coverage`, citation coverage/density, tool success,
+grounded findings, and trace completeness). A metric delta below `-0.02` is
+treated as a regression even if the aggregate score stayed flat. The comparison
+payload also records:
+
+- new or missing scenarios;
+- feature/context changes such as enabling verifier, reflection, refinement, or
+  parallel tools;
+- mean per-metric deltas across compared scenarios;
+- root-cause rollups such as `planner_gap`, `citation_gap`, `tool_error`, and
+  `trace_gap`;
+- the top metric regressions and improvements.
+
 The older command remains supported:
 
 ```bash
@@ -156,7 +170,9 @@ Each scenario can define thresholds. A benchmark summary includes:
   `planner_gap`, `citation_gap`, `tool_error`, `trace_gap`, and
   `verifier_gap`
 - `determinism`
-- `comparison`
+- `comparison`, including `regression_analysis` with context changes,
+  metric-delta summary, root-cause counts, missing/new scenarios, and top
+  regressions/improvements
 - paths to generated report and trace artifacts
 
 ## Live Mode
