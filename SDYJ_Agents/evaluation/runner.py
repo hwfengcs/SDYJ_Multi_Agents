@@ -33,11 +33,19 @@ REGRESSION_METRIC_KEYS = [
     "plan_coverage",
     "section_completeness",
     "citation_id_coverage",
+    "citation_validity",
+    "invalid_citation_count",
     "citation_density_per_1k_chars",
     "tool_success_rate",
     "grounded_key_finding_rate",
+    "unsupported_key_finding_count",
     "trace_completeness",
 ]
+
+LOWER_IS_BETTER_METRICS = {
+    "invalid_citation_count",
+    "unsupported_key_finding_count",
+}
 
 REGRESSION_DELTA_THRESHOLD = -0.02
 IMPROVEMENT_DELTA_THRESHOLD = 0.02
@@ -61,10 +69,14 @@ def _metric_root_cause(metric: str) -> str:
         return "report_structure_gap"
     if metric in {
         "citation_id_coverage",
+        "citation_validity",
+        "invalid_citation_count",
         "citation_density_per_1k_chars",
         "grounded_key_finding_rate",
     }:
         return "citation_gap"
+    if metric == "unsupported_key_finding_count":
+        return "unsupported_claim_gap"
     if metric == "tool_success_rate":
         return "tool_error"
     if metric == "trace_completeness":
@@ -86,6 +98,22 @@ def _round_delta(value: float | None) -> float | None:
     if value is None:
         return None
     return round(value, 4)
+
+
+def _is_regression(metric: str, delta: float | None) -> bool:
+    if delta is None:
+        return False
+    if metric in LOWER_IS_BETTER_METRICS:
+        return delta > abs(REGRESSION_DELTA_THRESHOLD)
+    return delta < REGRESSION_DELTA_THRESHOLD
+
+
+def _is_improvement(metric: str, delta: float | None) -> bool:
+    if delta is None:
+        return False
+    if metric in LOWER_IS_BETTER_METRICS:
+        return delta < -IMPROVEMENT_DELTA_THRESHOLD
+    return delta > IMPROVEMENT_DELTA_THRESHOLD
 
 
 def _summary_context_changes(current: Dict[str, Any], baseline: Dict[str, Any]) -> list[Dict[str, Any]]:
@@ -481,8 +509,12 @@ def _stable_result_fingerprint(result: Dict[str, Any]) -> Dict[str, Any]:
         "plan_coverage",
         "section_completeness",
         "citation_id_coverage",
+        "citation_validity",
+        "invalid_citation_count",
+        "unsupported_key_finding_count",
         "evidence_count",
         "citation_count",
+        "valid_citation_count",
         "tool_success_rate",
         "grounded_key_finding_rate",
         "trace_completeness",
@@ -554,7 +586,7 @@ def _compare_summaries(current: Dict[str, Any], baseline: Dict[str, Any]) -> Dic
             )
             metric_delta_totals[metric] = metric_delta_totals.get(metric, 0.0) + (metric_delta or 0.0)
             metric_delta_counts[metric] += 1
-            if metric_delta is not None and metric_delta < REGRESSION_DELTA_THRESHOLD:
+            if _is_regression(metric, metric_delta):
                 regression = {
                     "scenario_id": scenario_id,
                     "metric": metric,
@@ -567,7 +599,7 @@ def _compare_summaries(current: Dict[str, Any], baseline: Dict[str, Any]) -> Dic
                 top_metric_regressions.append(regression)
                 metric_regression_counts[metric] += 1
                 root_cause_counts[root_cause] += 1
-            elif metric_delta is not None and metric_delta > IMPROVEMENT_DELTA_THRESHOLD:
+            elif _is_improvement(metric, metric_delta):
                 improvement = {
                     "scenario_id": scenario_id,
                     "metric": metric,

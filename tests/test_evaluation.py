@@ -1,5 +1,5 @@
 from SDYJ_Agents.evaluation import compare_evaluation_summaries, run_evaluation
-from SDYJ_Agents.evaluation.metrics import apply_thresholds, trace_completeness
+from SDYJ_Agents.evaluation.metrics import apply_thresholds, evaluate_state, trace_completeness
 
 
 def test_offline_evaluation_runs_one_scenario(tmp_path):
@@ -50,6 +50,30 @@ def test_threshold_overrides_report_failed_metric(tmp_path):
     assert summary["failure_analysis"]["root_cause_counts"] == {"tool_error": 1}
 
 
+def test_evaluate_state_penalizes_invalid_citations():
+    scenario = {
+        "id": "citation_audit_smoke",
+        "required_terms": [],
+        "expected_sections": [],
+    }
+    state = {
+        "final_report": "- grounded [E1]\n- missing source [E99]\n",
+        "research_plan": {},
+        "research_results": [],
+        "evidence_items": [
+            {"evidence_id": "E1", "title": "Trace"},
+            {"evidence_id": "E2", "title": "Cost"},
+        ],
+    }
+
+    metrics = evaluate_state(state, scenario, trace={})
+
+    assert metrics["citation_id_coverage"] == 0.5
+    assert metrics["citation_validity"] == 0.5
+    assert metrics["invalid_citation_count"] == 1
+    assert metrics["overall_score"] < 1.0
+
+
 def test_compare_summary_flags_metric_regression():
     comparison = compare_evaluation_summaries(
         current={
@@ -60,6 +84,7 @@ def test_compare_summary_flags_metric_regression():
                     "metrics": {
                         "overall_score": 1.0,
                         "citation_id_coverage": 0.5,
+                        "invalid_citation_count": 1,
                         "tool_success_rate": 1.0,
                     },
                 }
@@ -74,6 +99,7 @@ def test_compare_summary_flags_metric_regression():
                     "metrics": {
                         "overall_score": 1.0,
                         "citation_id_coverage": 1.0,
+                        "invalid_citation_count": 0,
                         "tool_success_rate": 0.5,
                     },
                 }
@@ -82,7 +108,7 @@ def test_compare_summary_flags_metric_regression():
     )
 
     assert comparison["passed"] is False
-    assert comparison["metric_regression_count"] == 1
+    assert comparison["metric_regression_count"] == 2
     regression = comparison["rows"][0]["metric_regressions"][0]
     assert regression["metric"] == "citation_id_coverage"
     assert regression["root_cause"] == "citation_gap"
@@ -90,8 +116,9 @@ def test_compare_summary_flags_metric_regression():
     assert analysis["context_changes"] == [
         {"key": "enable_verification", "baseline": False, "current": True}
     ]
-    assert analysis["root_cause_counts"] == {"citation_gap": 1}
+    assert analysis["root_cause_counts"] == {"citation_gap": 2}
     assert analysis["metric_delta_summary"]["citation_id_coverage"]["mean_delta"] == -0.5
+    assert analysis["metric_delta_summary"]["invalid_citation_count"]["regression_count"] == 1
     assert analysis["metric_delta_summary"]["tool_success_rate"]["improvement_count"] == 1
     assert analysis["top_metric_regressions"][0]["scenario_id"] == "agent_reliability_hard"
     assert analysis["top_metric_improvements"][0]["metric"] == "tool_success_rate"

@@ -33,10 +33,16 @@ def _plan_coverage(plan: Dict[str, Any], report: str, required_terms: list[str])
 
 
 def _citation_id_coverage(report: str, evidence_count: int) -> float:
+    # Backward-compatible helper retained for callers that still need a
+    # citation-coverage estimate without the richer evidence audit.
     if evidence_count <= 0:
         return 0.0
-    cited = set(re.findall(r"\[E\d+\]", report or ""))
-    return len(cited) / evidence_count
+    cited = {
+        int(match[2:-1])
+        for match in re.findall(r"\[E\d+\]", report or "")
+        if match[2:-1].isdigit()
+    }
+    return len([item for item in cited if 1 <= item <= evidence_count]) / evidence_count
 
 
 def _field_coverage(items: list[Dict[str, Any]], required_fields: list[str]) -> float:
@@ -165,7 +171,7 @@ def evaluate_state(
             report,
             scenario.get("expected_sections", []),
         ),
-        "citation_id_coverage": _citation_id_coverage(report, len(evidence_items)),
+        "citation_id_coverage": evidence_metrics["citation_evidence_coverage"],
         "iteration_count": state.get("iteration_count", 0),
         "trace_completeness": trace_completeness(trace, scenario),
         **evidence_metrics,
@@ -188,11 +194,16 @@ def evaluate_state(
     if "revision_count" in trace_metrics:
         metrics["revision_count"] = trace_metrics["revision_count"]
 
+    citation_grounding_score = min(
+        metrics["citation_id_coverage"],
+        metrics.get("citation_validity", 1.0),
+    )
+
     # A compact score for dashboards. Keep the raw metrics visible for real review.
     metrics["overall_score"] = round(
         0.2 * metrics["plan_coverage"]
         + 0.16 * metrics["section_completeness"]
-        + 0.18 * min(metrics["citation_id_coverage"], 1.0)
+        + 0.18 * min(citation_grounding_score, 1.0)
         + 0.14 * min(metrics["citation_density_per_1k_chars"] / 2.0, 1.0)
         + 0.12 * metrics["tool_success_rate"]
         + 0.1 * metrics["grounded_key_finding_rate"]

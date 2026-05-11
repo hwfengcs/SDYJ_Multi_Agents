@@ -113,7 +113,11 @@ The Researcher also normalizes raw results into evidence items:
 ```
 
 The Rapporteur uses these IDs in report claims and in the reference section, so
-reviewers can trace a claim back to source, query, and tool.
+reviewers can trace a claim back to source, query, and tool. Before the LLM
+Verifier makes a semantic judgment, SDYJ also runs a deterministic citation
+audit over the report. The audit flags invalid IDs such as `[E99]`, collected
+evidence that was never cited, and key-finding bullets without valid evidence
+IDs.
 
 ## Observability
 
@@ -124,7 +128,8 @@ contains:
 - LLM calls with latency, prompt/response size, and provider token usage when available;
 - retrieval tool calls with source, query, result count, latency, and error;
 - reflection, plan-refinement, and verification events when v0.6 features are enabled;
-- report metrics such as evidence count, citation count, duplicate URL ratio, and grounded key-finding rate.
+- report metrics such as evidence count, citation count, citation validity,
+  invalid citation count, duplicate URL ratio, and grounded key-finding rate.
 
 Use:
 

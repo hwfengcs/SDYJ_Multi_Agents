@@ -125,12 +125,34 @@ def test_parse_falls_back_when_response_not_json():
 def test_verify_accepts_passing_report():
     llm = _ScriptedLLM([json.dumps(_passing_critique())])
     verifier = Verifier(llm)
-    result = verifier.verify(_state_with_report())
+    result = verifier.verify(_state_with_report(report="- grounded claim [E1]\n- another grounded claim [E2]"))
     assert result["should_revise"] is False
     assert result["overall_quality"] >= DEFAULT_OVERALL_THRESHOLD
     # Verifier should still expose all four canonical dimensions even if the
     # LLM omits some — keeps downstream code simple.
     assert set(result["scores"]) == set(DIMENSIONS)
+    assert result["citation_audit"]["citation_audit_passed"] is True
+
+
+def test_verify_forces_revision_on_invalid_citation_even_if_llm_passes():
+    llm = _ScriptedLLM([json.dumps(_passing_critique())])
+    verifier = Verifier(llm)
+    result = verifier.verify(_state_with_report(report="- This cites a missing source [E99]\n"))
+
+    assert result["should_revise"] is True
+    assert result["scores"]["claim_evidence_alignment"] <= 0.5
+    assert result["citation_audit"]["invalid_citation_ids"] == ["E99"]
+    assert any("invalid citations" in hint for hint in result["revision_hints"])
+
+
+def test_verify_forces_revision_on_uncited_key_finding():
+    llm = _ScriptedLLM([json.dumps(_passing_critique())])
+    verifier = Verifier(llm)
+    result = verifier.verify(_state_with_report(report="- This key finding has no citation\n"))
+
+    assert result["should_revise"] is True
+    assert result["citation_audit"]["unsupported_key_finding_count"] == 1
+    assert any("unsupported key-finding" in hint for hint in result["revision_hints"])
 
 
 def test_verify_marks_low_alignment_as_revise_even_if_overall_passes():
@@ -143,7 +165,7 @@ def test_verify_marks_low_alignment_as_revise_even_if_overall_passes():
 
     llm = _ScriptedLLM([json.dumps(critique)])
     verifier = Verifier(llm)
-    result = verifier.verify(_state_with_report())
+    result = verifier.verify(_state_with_report(report="- grounded claim [E1]\n- another grounded claim [E2]\n"))
     assert result["should_revise"] is True, "alignment floor must override LLM verdict"
     assert result["scores"]["claim_evidence_alignment"] == pytest.approx(0.4)
 
@@ -175,7 +197,9 @@ def test_verify_honors_alignment_threshold_param():
     critique["scores"]["claim_evidence_alignment"] = 0.9
     llm = _ScriptedLLM([json.dumps(critique)])
     verifier = Verifier(llm, alignment_threshold=0.95)
-    result = verifier.verify(_state_with_report())
+    result = verifier.verify(
+        _state_with_report(report="- grounded claim [E1]\n- another grounded claim [E2]\n")
+    )
     assert result["should_revise"] is True
 
 
@@ -184,7 +208,9 @@ def test_verify_recomputes_overall_when_llm_returns_garbage_overall():
     critique["overall_quality"] = "n/a"
     llm = _ScriptedLLM([json.dumps(critique)])
     verifier = Verifier(llm)
-    result = verifier.verify(_state_with_report())
+    result = verifier.verify(
+        _state_with_report(report="- grounded claim [E1]\n- another grounded claim [E2]\n")
+    )
     # 0.9 across all four dims weighted should produce 0.9.
     assert result["overall_quality"] == pytest.approx(0.9, abs=1e-6)
 

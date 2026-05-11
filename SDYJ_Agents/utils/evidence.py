@@ -9,6 +9,7 @@ from urllib.parse import urlparse, urlunparse
 
 
 EvidenceItem = Dict[str, Any]
+CITATION_RE = re.compile(r"\[E\d+\]")
 
 
 def normalize_url(url: str | None) -> str:
@@ -188,6 +189,92 @@ def append_citations(text: str, evidence_items: Sequence[EvidenceItem], max_ids:
     return f"{text} {' '.join(f'[{evidence_id}]' for evidence_id in ids)}"
 
 
+def _evidence_id_sort_key(evidence_id: str) -> tuple[int, str]:
+    if evidence_id.startswith("E") and evidence_id[1:].isdigit():
+        return (int(evidence_id[1:]), evidence_id)
+    return (10**9, evidence_id)
+
+
+def _ordered_unique(values: Iterable[str]) -> List[str]:
+    seen = set()
+    ordered = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        ordered.append(value)
+    return ordered
+
+
+def audit_report_citations(
+    report: str,
+    evidence_items: Sequence[EvidenceItem],
+) -> Dict[str, Any]:
+    """Deterministically audit report citations against collected evidence.
+
+    The LLM verifier judges semantic support, but citation syntax and evidence
+    coverage should be checked without model discretion. This catches common
+    report failures such as citing ``[E99]`` when only ``E1``/``E2`` exist, or
+    key-finding bullets that have no valid evidence ID.
+    """
+    report = report or ""
+    valid_evidence_ids = sorted(
+        {
+            str(item.get("evidence_id"))
+            for item in evidence_items
+            if item.get("evidence_id")
+        },
+        key=_evidence_id_sort_key,
+    )
+    valid_set = set(valid_evidence_ids)
+    cited_ids = _ordered_unique(match.strip("[]") for match in CITATION_RE.findall(report))
+    valid_cited_ids = [evidence_id for evidence_id in cited_ids if evidence_id in valid_set]
+    invalid_citation_ids = [evidence_id for evidence_id in cited_ids if evidence_id not in valid_set]
+    unused_evidence_ids = [
+        evidence_id for evidence_id in valid_evidence_ids if evidence_id not in set(valid_cited_ids)
+    ]
+
+    key_finding_lines = [
+        line.strip()
+        for line in report.splitlines()
+        if line.strip().startswith("- ") and "##" not in line
+    ]
+    supported_key_finding_lines = []
+    unsupported_key_finding_lines = []
+    for line in key_finding_lines:
+        line_citations = {match.strip("[]") for match in CITATION_RE.findall(line)}
+        if line_citations & valid_set:
+            supported_key_finding_lines.append(line)
+        else:
+            unsupported_key_finding_lines.append(line)
+
+    evidence_count = len(valid_evidence_ids)
+    cited_count = len(cited_ids)
+    valid_cited_count = len(set(valid_cited_ids))
+    return {
+        "valid_evidence_ids": valid_evidence_ids,
+        "cited_evidence_ids": cited_ids,
+        "valid_cited_evidence_ids": sorted(set(valid_cited_ids), key=_evidence_id_sort_key),
+        "invalid_citation_ids": invalid_citation_ids,
+        "unused_evidence_ids": unused_evidence_ids,
+        "evidence_count": evidence_count,
+        "citation_count": cited_count,
+        "valid_citation_count": valid_cited_count,
+        "invalid_citation_count": len(invalid_citation_ids),
+        "citation_id_coverage": valid_cited_count / evidence_count if evidence_count else 0.0,
+        "citation_validity": valid_cited_count / cited_count if cited_count else 1.0,
+        "key_finding_count": len(key_finding_lines),
+        "supported_key_finding_count": len(supported_key_finding_lines),
+        "unsupported_key_finding_count": len(unsupported_key_finding_lines),
+        "unsupported_key_finding_examples": unsupported_key_finding_lines[:5],
+        "grounded_key_finding_rate": (
+            len(supported_key_finding_lines) / len(key_finding_lines)
+            if key_finding_lines else 0.0
+        ),
+        "citation_audit_passed": not invalid_citation_ids and not unsupported_key_finding_lines,
+    }
+
+
 def calculate_evidence_metrics(
     research_results: Sequence[Dict[str, Any]],
     evidence_items: Sequence[EvidenceItem],
@@ -207,24 +294,25 @@ def calculate_evidence_metrics(
                 raw_urls.append(url)
 
     duplicate_urls = len(raw_urls) - len(set(raw_urls))
-    citation_ids = set(re.findall(r"\[E\d+\]", report or ""))
-    key_finding_lines = [
-        line for line in (report or "").splitlines()
-        if line.strip().startswith("- ") and "##" not in line
-    ]
-    cited_key_finding_lines = [line for line in key_finding_lines if re.search(r"\[E\d+\]", line)]
+    citation_audit = audit_report_citations(report, evidence_items)
 
     return {
         "raw_url_count": len(raw_urls),
         "duplicate_url_count": duplicate_urls,
         "duplicate_url_ratio": duplicate_urls / len(raw_urls) if raw_urls else 0.0,
         "evidence_count": len(evidence_items),
-        "citation_count": len(citation_ids),
+        "citation_count": citation_audit["citation_count"],
+        "valid_citation_count": citation_audit["valid_citation_count"],
+        "invalid_citation_count": citation_audit["invalid_citation_count"],
+        "citation_validity": citation_audit["citation_validity"],
+        "citation_evidence_coverage": citation_audit["citation_id_coverage"],
+        "unused_evidence_count": len(citation_audit["unused_evidence_ids"]),
+        "unsupported_key_finding_count": citation_audit["unsupported_key_finding_count"],
+        "citation_audit_passed": citation_audit["citation_audit_passed"],
         "citation_density_per_1k_chars": (
-            len(citation_ids) / max(len(report), 1) * 1000 if report else 0.0
+            citation_audit["valid_citation_count"] / max(len(report), 1) * 1000
+            if report else 0.0
         ),
         "tool_success_rate": successful_batches / total_batches if total_batches else 0.0,
-        "grounded_key_finding_rate": (
-            len(cited_key_finding_lines) / len(key_finding_lines) if key_finding_lines else 0.0
-        ),
+        "grounded_key_finding_rate": citation_audit["grounded_key_finding_rate"],
     }

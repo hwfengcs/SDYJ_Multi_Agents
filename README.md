@@ -104,6 +104,7 @@ Trace v2 bundle → outputs/runs/<run-id>/
 - **每次 LLM 调用的 token 与美元成本跟踪** —— 见 [`SDYJ_Agents/utils/cost.py`](SDYJ_Agents/utils/cost.py)。CLI `inspect-run` 会展示每次调用的成本表，trace.metrics 累计总额。
 - **provider 无关的 usage 捕获**：OpenAI、Claude、DeepSeek、Gemini 都会暴露 `last_usage`，无论 provider 都能算 cost。
 - **Verifier loop** —— 由独立 critic agent 检查报告与证据是否一致，不达标会触发有上限的 Rapporteur 修订。
+- **确定性 citation audit** —— Verifier 前会先检查 `[E1]` 证据 ID 是否真实存在、key finding 是否有有效引用，并把无效引用/无支撑 claim 纳入 benchmark 指标。
 - **Reflexive Researcher** —— 当一批查询返回为空、失败或相关性低时，agent 会重写查询并重试一次。
 - **中途计划修订** —— 完成足够子任务后，Planner 会基于已收集证据调整剩余计划。
 - **并行工具执行** —— 单个 task 内的 `(query, source)` 检索可以按并发上限同时运行。

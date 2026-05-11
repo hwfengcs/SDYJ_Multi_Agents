@@ -398,12 +398,18 @@ class WorkflowNodes:
             # downstream summaries (diff-runs, eval reports).
             trace = state.get("trace")
             if trace is not None:
+                citation_audit = verification_result.get("citation_audit") or {}
                 trace.setdefault("metrics", {}).update(
                     {
                         "verifier_overall_quality": verification_result.get("overall_quality"),
                         "verifier_should_revise": verification_result.get("should_revise"),
                         "verifier_weakest_dimension": verification_result.get("weakest_dimension"),
                         "verifier_revision_count": state["revision_count"],
+                        "verifier_invalid_citation_count": citation_audit.get("invalid_citation_count"),
+                        "verifier_unsupported_key_finding_count": citation_audit.get(
+                            "unsupported_key_finding_count"
+                        ),
+                        "verifier_citation_validity": citation_audit.get("citation_validity"),
                     }
                 )
 

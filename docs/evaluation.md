@@ -12,8 +12,8 @@ behavior. The operational benchmark guide is now maintained in
 | --- | --- | --- |
 | Plan quality | Whether subtasks cover the user goal | Required scenario concepts appear in the plan/report |
 | Tool reliability | Whether tool calls succeed and degrade gracefully | Tool success rate, errors, result counts, latency |
-| Evidence quality | Whether claims are grounded in retrieved sources | Evidence IDs, duplicate URL ratio, citation coverage |
-| Synthesis quality | Whether the report is coherent and complete | Section completeness, grounded key findings |
+| Evidence quality | Whether claims are grounded in retrieved sources | Evidence IDs, duplicate URL ratio, citation coverage, citation validity |
+| Synthesis quality | Whether the report is coherent and complete | Section completeness, grounded key findings, unsupported key-finding count |
 | Efficiency | Runtime budget and cost behavior | Iterations, latency, token usage when exposed |
 | Human control | Whether approval gates reduce risk | Plan approval before expensive retrieval |
 | Trace/replay | Whether failures can be diagnosed and replayed | Trace completeness, replay cache, event timeline |
@@ -83,12 +83,20 @@ run trace under `outputs/traces/`. Current metrics include:
 | --- | --- |
 | `plan_coverage` | Required scenario concepts covered by the plan/report |
 | `section_completeness` | Expected report sections present |
-| `citation_id_coverage` | Share of evidence IDs cited in the report |
+| `citation_id_coverage` | Share of collected evidence IDs cited by valid report citations |
+| `citation_validity` | Share of report citations that point to collected evidence IDs |
+| `invalid_citation_count` | Report citation IDs that do not exist in the collected evidence list |
 | `citation_density_per_1k_chars` | Evidence citation density normalized by report length |
 | `duplicate_url_ratio` | Duplicate raw URLs before evidence deduplication |
 | `tool_success_rate` | Retrieval batches without error |
-| `grounded_key_finding_rate` | Key finding bullets that include evidence IDs |
+| `grounded_key_finding_rate` | Key finding bullets that include valid evidence IDs |
+| `unsupported_key_finding_count` | Key finding bullets without any valid evidence ID |
 | `overall_score` | Weighted dashboard score for quick comparison |
+
+Citation validity is checked deterministically before any LLM critique. The
+audit catches invalid IDs like `[E99]`, unused collected evidence, and
+key-finding bullets without valid citations. The Verifier consumes this audit
+and can force a revise loop even when the model's own critique is lenient.
 
 ## Latest Local Benchmark
 

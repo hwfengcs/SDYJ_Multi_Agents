@@ -22,7 +22,11 @@ from typing import Any, Dict, List, Optional
 
 from ..llm.base import BaseLLM
 from ..prompts.loader import PromptLoader
-from ..utils.evidence import build_evidence_from_results, format_evidence_for_prompt
+from ..utils.evidence import (
+    audit_report_citations,
+    build_evidence_from_results,
+    format_evidence_for_prompt,
+)
 from ..utils.structured_output import generate_json_object
 from ..workflow.state import ResearchState
 
@@ -124,6 +128,8 @@ class Verifier:
             else "(no evidence collected)"
         )
 
+        citation_audit = audit_report_citations(report, evidence_items)
+
         prompt = self.prompt_loader.load(
             "verifier_critique",
             query=state.get("query", ""),
@@ -131,6 +137,7 @@ class Verifier:
             plan_subtasks_summary=_summarize_subtasks(plan.get("sub_tasks") or []),
             evidence=evidence_text,
             report=report,
+            citation_audit=json.dumps(citation_audit, ensure_ascii=False, indent=2),
         )
 
         try:
@@ -146,31 +153,62 @@ class Verifier:
                 summary=f"Verifier LLM call failed: {exc}",
             )
 
-        return self._enforce_thresholds(parsed)
+        return self._enforce_thresholds(parsed, citation_audit=citation_audit)
 
-    def _enforce_thresholds(self, result: Dict[str, Any]) -> Dict[str, Any]:
+    def _enforce_thresholds(
+        self,
+        result: Dict[str, Any],
+        citation_audit: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
         """Enforce SDYJ's own pass/fail rules even if the LLM disagrees.
 
         The model can be too lenient — especially when graded against its
         own report. We treat the LLM's `should_revise` as advisory and apply
-        the configured thresholds here.
+        the configured thresholds and deterministic citation audit here.
         """
         scores = result.get("scores") or {}
         normalized_scores = {dim: _coerce_score(scores.get(dim)) for dim in DIMENSIONS}
+        citation_audit = citation_audit or {}
+        invalid_citation_count = int(citation_audit.get("invalid_citation_count") or 0)
+        unsupported_key_finding_count = int(citation_audit.get("unsupported_key_finding_count") or 0)
+        citation_validity = citation_audit.get("citation_validity")
+        citation_coverage = citation_audit.get("citation_id_coverage")
+        if isinstance(citation_validity, (int, float)):
+            normalized_scores["citation_completeness"] = min(
+                normalized_scores["citation_completeness"],
+                max(0.0, min(1.0, float(citation_validity))),
+            )
+        if isinstance(citation_coverage, (int, float)):
+            normalized_scores["citation_completeness"] = min(
+                normalized_scores["citation_completeness"],
+                max(0.0, min(1.0, float(citation_coverage))),
+            )
+        if invalid_citation_count:
+            normalized_scores["claim_evidence_alignment"] = min(
+                normalized_scores["claim_evidence_alignment"],
+                0.5,
+            )
+            normalized_scores["factual_consistency"] = min(
+                normalized_scores["factual_consistency"],
+                0.65,
+            )
+        if unsupported_key_finding_count:
+            normalized_scores["claim_evidence_alignment"] = min(
+                normalized_scores["claim_evidence_alignment"],
+                0.6,
+            )
         result["scores"] = normalized_scores
 
-        overall = result.get("overall_quality")
-        if not isinstance(overall, (int, float)) or overall < 0 or overall > 1:
-            overall = sum(
-                normalized_scores[dim] * DIMENSION_WEIGHTS[dim] for dim in DIMENSIONS
-            )
-            result["overall_quality"] = round(overall, 4)
-        else:
-            result["overall_quality"] = round(float(overall), 4)
+        overall = sum(
+            normalized_scores[dim] * DIMENSION_WEIGHTS[dim] for dim in DIMENSIONS
+        )
+        result["overall_quality"] = round(overall, 4)
 
         forced_revise = (
             result["overall_quality"] < self.overall_threshold
             or normalized_scores["claim_evidence_alignment"] < self.alignment_threshold
+            or invalid_citation_count > 0
+            or unsupported_key_finding_count > 0
         )
         if forced_revise:
             result["should_revise"] = True
@@ -182,10 +220,12 @@ class Verifier:
         if not isinstance(hints, list):
             hints = [str(hints)]
         result["revision_hints"] = [str(h).strip() for h in hints if str(h).strip()]
+        result["revision_hints"].extend(_citation_audit_hints(citation_audit))
 
         if "summary" not in result or not isinstance(result["summary"], str):
             result["summary"] = ""
 
+        result["citation_audit"] = citation_audit
         return result
 
 
@@ -215,6 +255,31 @@ def _summarize_subtasks(sub_tasks: List[Dict[str, Any]]) -> str:
         status = task.get("status", "pending")
         lines.append(f"- [{task_id}] ({status}) {description}")
     return "\n".join(lines)
+
+
+def _citation_audit_hints(citation_audit: Dict[str, Any]) -> List[str]:
+    hints = []
+    invalid_ids = citation_audit.get("invalid_citation_ids") or []
+    if invalid_ids:
+        hints.append(
+            "Replace invalid citations "
+            f"{', '.join(f'[{evidence_id}]' for evidence_id in invalid_ids[:5])} "
+            "with evidence IDs that exist in the collected evidence list, or remove the unsupported claims."
+        )
+    unsupported_examples = citation_audit.get("unsupported_key_finding_examples") or []
+    if unsupported_examples:
+        examples = "; ".join(str(item)[:100] for item in unsupported_examples[:2])
+        hints.append(
+            "Add valid evidence citations to unsupported key-finding bullets, for example: "
+            f"{examples}"
+        )
+    unused_ids = citation_audit.get("unused_evidence_ids") or []
+    if unused_ids and len(unused_ids) >= 3:
+        hints.append(
+            "Consider citing or explicitly discarding unused collected evidence IDs: "
+            f"{', '.join(f'[{evidence_id}]' for evidence_id in unused_ids[:5])}."
+        )
+    return hints
 
 
 def _parse_verifier_response(response: str) -> Dict[str, Any]:

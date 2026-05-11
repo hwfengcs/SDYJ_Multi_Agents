@@ -104,6 +104,7 @@ See [docs/architecture.md](docs/architecture.md) for the full design notes.
 - **Per-call token + USD cost tracking** in every LLM call — see [`SDYJ_Agents/utils/cost.py`](SDYJ_Agents/utils/cost.py). The CLI `inspect-run` shows a per-call cost table and the trace `metrics` block aggregates totals.
 - **Provider-agnostic usage capture**: OpenAI, Claude, DeepSeek, and Gemini now expose `last_usage` so cost estimation works regardless of provider.
 - **Verifier loop** — a critic agent re-reads the report against evidence and can trigger bounded Rapporteur revisions when claims are unsupported.
+- **Deterministic citation audit** — before the Verifier's LLM judgment, SDYJ checks that `[E1]` evidence IDs exist, key findings have valid citations, and invalid/unsupported claims become benchmark metrics.
 - **Reflexive Researcher** — empty, failing, or low-relevance query batches now trigger one query-rewrite retry.
 - **Mid-flight plan refinement** — after enough subtasks complete, the Planner can revise the remaining plan based on collected evidence.
 - **Parallel tool execution** — each task can run its `(query, source)` lookups concurrently with a bounded concurrency limit.

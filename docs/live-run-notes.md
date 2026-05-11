@@ -523,3 +523,64 @@ External blockers remain unchanged:
 - Docker runtime smoke still requires a Docker-enabled host.
 - HF Spaces / GitHub Pages / GHCR / TestPyPI / PyPI still require platform-side
   setup or manual workflow execution.
+
+## 2026-05-11 - Deterministic citation audit
+
+- Status: local verifier/benchmark grounding checks improved; external blockers
+  remain unchanged.
+- Environment preflight:
+  - Branch: `feat/v0.6-self-verifying`.
+  - Latest commit before this batch: `60ddaca feat(benchmark): add regression analysis comparison`.
+  - `sdyj doctor --provider deepseek`: DeepSeek key present, Tavily missing,
+    MCP source not configured.
+  - Local `.env` check: `TAVILY_API_KEY=missing`; no secret value was printed or
+    recorded.
+
+Scope:
+
+- Added deterministic citation audit in `SDYJ_Agents/utils/evidence.py`.
+- Benchmark metrics now include valid citation count, invalid citation count,
+  citation validity, unused evidence count, unsupported key-finding count, and
+  citation-audit pass/fail.
+- The Verifier consumes the same audit before/alongside the LLM critique. Invalid
+  evidence IDs such as `[E99]` or unsupported key-finding bullets can force a
+  revise loop even if the LLM verifier is lenient.
+- Trace metrics now surface verifier citation-audit signals for `inspect-run`,
+  replay/diff analysis, and evaluation summaries.
+- Benchmark comparison treats `invalid_citation_count` and
+  `unsupported_key_finding_count` as lower-is-better metrics.
+
+Validation:
+
+```bash
+python -m pytest tests/test_evidence.py tests/test_verifier.py tests/test_evaluation.py
+# 29 passed
+
+python -m ruff check SDYJ_Agents\utils\evidence.py SDYJ_Agents\agents\verifier.py SDYJ_Agents\evaluation\metrics.py SDYJ_Agents\evaluation\runner.py SDYJ_Agents\workflow\nodes.py tests\test_evidence.py tests\test_verifier.py tests\test_evaluation.py
+# All checks passed
+
+sdyj benchmark run --max-scenarios 1 --max-iterations 2 --fail-under 0.75 --determinism-repeats 2 --output-dir outputs\verify_citation_audit_gate2
+# average score 1.0000, passed
+
+python -m pytest
+# 150 passed, 1 xfailed
+
+python -m ruff check SDYJ_Agents tests examples
+# All checks passed
+
+python -m build
+# built sdyj_multi_agents-0.6.0a1.tar.gz and sdyj_multi_agents-0.6.0a1-py3-none-any.whl
+
+python -m twine check dist/*
+# PASSED
+```
+
+External blockers remain unchanged:
+
+- `TAVILY_API_KEY` is still missing, so full DeepSeek + Tavily + arXiv live
+  research was not run.
+- Real GAIA Level 1 still requires Hugging Face login / dataset access and real
+  predictions.
+- Docker runtime smoke still requires a Docker-enabled host.
+- HF Spaces / GitHub Pages / GHCR / TestPyPI / PyPI still require platform-side
+  setup or manual workflow execution.

@@ -154,12 +154,21 @@ distinguishable.
 | --- | --- |
 | `plan_coverage` | Required concepts covered by plan/report |
 | `section_completeness` | Expected report sections present |
-| `citation_id_coverage` | Evidence IDs cited by the report |
+| `citation_id_coverage` | Share of collected evidence IDs cited by valid report citations |
+| `citation_validity` | Share of report citations that point to collected evidence IDs |
+| `invalid_citation_count` | Report citation IDs that do not exist in the collected evidence list |
 | `citation_density_per_1k_chars` | Citation density normalized by length |
 | `tool_success_rate` | Retrieval batches without errors |
-| `grounded_key_finding_rate` | Key findings that include evidence IDs |
+| `grounded_key_finding_rate` | Key-finding bullets that include valid evidence IDs |
+| `unsupported_key_finding_count` | Key-finding bullets without any valid evidence ID |
 | `trace_completeness` | Trace has required fields, nodes, events, tool/LLM details, and replay cache |
 | `overall_score` | Compact dashboard score |
+
+Citation metrics come from a deterministic citation audit rather than the LLM
+verifier. It flags invalid IDs such as `[E99]`, evidence items that were never
+cited, and key-finding bullets without valid citations. The Verifier consumes
+the same audit and can force a revise loop even if the LLM critique is too
+lenient.
 
 Each scenario can define thresholds. A benchmark summary includes:
 

@@ -61,6 +61,7 @@ Shipped in 0.6.0a1 and the current v0.6 branch:
 - [x] Packaging extras: `[web]`, `[mcp]`, `[benchmarks]`, `[all]`.
 - [x] English-first README with comparison table and v0.6 status.
 - [x] Verifier agent + bounded revise loop (5th LangGraph node).
+- [x] Deterministic citation audit for invalid evidence IDs, unsupported key findings, and verifier hardening.
 - [x] Reflexive Researcher: query rewrite + retry on empty / low-relevance batches.
 - [x] Plan refinement: Planner sees collected evidence after N tasks and adapts the rest of the plan.
 - [x] Parallel tool execution within a task (asyncio.gather + concurrency limit).
