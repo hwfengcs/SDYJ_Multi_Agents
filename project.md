@@ -483,7 +483,8 @@ SDYJ_deep_reasearch/
 ├── outputs/                     # 生成的报告输出目录
 ├── .env.example                 # 环境变量示例
 ├── .env                         # 环境变量（不提交到版本控制）
-├── requirements.txt             # Python 依赖
-├── pyproject.toml              # 项目配置
+├── environment.yml              # Conda 开发环境
+├── requirements.txt             # 托管平台兼容的轻量运行依赖
+├── pyproject.toml               # Python 包元数据与 CLI 入口
 ├── README.md                    # 项目说明
 └── project.md                   # 本开发文档

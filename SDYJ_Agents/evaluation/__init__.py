@@ -1,5 +1,5 @@
 """Evaluation utilities for SDYJ Multi Agents."""
 
-from .runner import run_evaluation
+from .runner import compare_evaluation_summaries, run_evaluation
 
-__all__ = ["run_evaluation"]
+__all__ = ["compare_evaluation_summaries", "run_evaluation"]

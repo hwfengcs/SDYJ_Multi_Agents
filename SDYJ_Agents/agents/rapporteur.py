@@ -6,7 +6,7 @@ generating the final research report.
 """
 
 import json
-from typing import Dict, List
+from typing import Any, Dict, List
 from datetime import datetime
 from ..workflow.state import ResearchState
 from ..llm.base import BaseLLM
@@ -17,7 +17,29 @@ from ..utils.evidence import (
     calculate_evidence_metrics,
     format_evidence_for_prompt,
 )
+from ..utils.structured_output import generate_json_object
 from ..utils.tracing import record_report_summary
+
+
+ORGANIZED_INFO_SCHEMA = {
+    "type": "object",
+    "required": ["themes"],
+    "properties": {
+        "themes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["name", "key_points"],
+                "properties": {
+                    "name": {"type": "string"},
+                    "key_points": {"type": "array", "items": {"type": "string"}},
+                },
+                "additionalProperties": True,
+            },
+        }
+    },
+    "additionalProperties": True,
+}
 
 
 class Rapporteur:
@@ -46,6 +68,14 @@ class Rapporteur:
         """
         Generate a comprehensive research report.
 
+        When ``state['revision_count']`` is greater than zero this method
+        switches to *revise* mode: it reads the previous report and the
+        latest verifier critique from state, sends them to the rapporteur
+        revise prompt, and replaces ``final_report`` with the revised text.
+        That keeps the structure stable, addresses the verifier's hints, and
+        avoids burning extra tokens on summarize/organize/synthesis steps
+        that already ran on the first pass.
+
         Args:
             state: Current research state with all research results
 
@@ -59,41 +89,51 @@ class Rapporteur:
         state['evidence_items'] = evidence_items
         output_format = state.get('output_format', 'markdown')
 
-        # Summarize findings
-        summary = self._summarize_findings(query, results, evidence_items)
-
-        # Organize information
-        organized_info = self._organize_information(summary, results)
-
-        # Generate report based on format
-        if output_format == 'html':
-            report = self._generate_html_report(
+        revision_count = state.get('revision_count', 0)
+        if revision_count > 0 and state.get('final_report'):
+            report = self._revise_report(
                 query=query,
                 plan=plan,
-                summary=summary,
-                organized_info=organized_info,
-                results=results,
-                evidence_items=evidence_items
-            )
-        elif output_format == 'json':
-            report = self._generate_json_report(
-                query=query,
-                plan=plan,
-                summary=summary,
-                organized_info=organized_info,
-                results=results,
+                previous_report=state['final_report'],
                 evidence_items=evidence_items,
+                verification_result=state.get('verification_result') or {},
             )
         else:
-            # Default to markdown
-            report = self._generate_markdown_report(
-                query=query,
-                plan=plan,
-                summary=summary,
-                organized_info=organized_info,
-                results=results,
-                evidence_items=evidence_items
-            )
+            # Summarize findings
+            summary = self._summarize_findings(query, results, evidence_items)
+
+            # Organize information
+            organized_info = self._organize_information(summary, results)
+
+            # Generate report based on format
+            if output_format == 'html':
+                report = self._generate_html_report(
+                    query=query,
+                    plan=plan,
+                    summary=summary,
+                    organized_info=organized_info,
+                    results=results,
+                    evidence_items=evidence_items
+                )
+            elif output_format == 'json':
+                report = self._generate_json_report(
+                    query=query,
+                    plan=plan,
+                    summary=summary,
+                    organized_info=organized_info,
+                    results=results,
+                    evidence_items=evidence_items,
+                )
+            else:
+                # Default to markdown
+                report = self._generate_markdown_report(
+                    query=query,
+                    plan=plan,
+                    summary=summary,
+                    organized_info=organized_info,
+                    results=results,
+                    evidence_items=evidence_items
+                )
 
         metrics = calculate_evidence_metrics(results, evidence_items, report)
 
@@ -110,8 +150,47 @@ class Rapporteur:
         )
         if state.get('trace'):
             state['trace'].setdefault('metrics', {}).update(metrics)
+            state['trace']['metrics']['revision_count'] = revision_count
 
         return state
+
+    def _revise_report(
+        self,
+        query: str,
+        plan: Dict,
+        previous_report: str,
+        evidence_items: List[Dict],
+        verification_result: Dict[str, Any],
+    ) -> str:
+        """Apply verifier hints to the previous report and return the revision.
+
+        We deliberately do not regenerate the summary/organize/synthesis
+        chain — those would discard the parts of the prior report that
+        already passed the critic. Re-using the previous text means
+        revisions are predictable, cheaper, and easier to diff in trace.
+        """
+        prompt = self.prompt_loader.load(
+            'rapporteur_revise',
+            query=query,
+            research_goal=plan.get('research_goal', query),
+            previous_report=previous_report,
+            weakest_dimension=verification_result.get('weakest_dimension', 'unknown'),
+            critic_summary=verification_result.get('summary', ''),
+            revision_hints=verification_result.get('revision_hints') or [],
+            evidence=format_evidence_for_prompt(evidence_items, limit=30),
+        )
+        # Slightly higher max_tokens so the model can rewrite long sections
+        # without being forced to truncate.
+        revised = self.llm.generate(prompt, temperature=0.3, max_tokens=4000)
+
+        # If the model wraps the report in fenced code blocks, strip them.
+        if revised.startswith('```'):
+            revised = revised.strip('`')
+            for marker in ("html", "json", "markdown", "md"):
+                if revised.lower().startswith(marker):
+                    revised = revised[len(marker):].lstrip("\n")
+                    break
+        return revised.strip()
 
     def _summarize_findings(
         self,
@@ -159,17 +238,14 @@ class Rapporteur:
             summary=summary
         )
 
-        response = self.llm.generate(prompt, temperature=0.5)
-
-        # Try to parse JSON
         try:
-            start = response.find('{')
-            end = response.rfind('}') + 1
-            if start != -1 and end > start:
-                json_str = response[start:end]
-                organized = json.loads(json_str)
-                return organized
-        except json.JSONDecodeError:
+            return generate_json_object(
+                self.llm,
+                prompt,
+                schema=ORGANIZED_INFO_SCHEMA,
+                temperature=0.5,
+            )
+        except (ValueError, TypeError, json.JSONDecodeError):
             pass
 
         # Fallback structure

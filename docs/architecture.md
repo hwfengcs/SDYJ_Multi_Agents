@@ -16,11 +16,17 @@ flowchart TD
     D --> E[Human review]
     E -->|revise| D
     E -->|approve| F[Researcher]
-    F --> G[Evidence normalization and trace update]
-    G --> J{Enough context?}
+    F --> G[Evidence normalization, reflection, and trace update]
+    G --> R{Plan refinement due?}
+    R -->|yes| D2[Planner refine remaining tasks]
+    D2 --> J{Enough context?}
+    R -->|no| J
     J -->|no| F
     J -->|yes| H[Rapporteur]
-    H --> I[Markdown or HTML report]
+    H --> I[Markdown, HTML, or JSON report]
+    I --> V[Verifier]
+    V -->|revise under cap| H
+    V -->|accept or skipped| K[Trace bundle + report]
 ```
 
 ## Agents
@@ -29,8 +35,9 @@ flowchart TD
 | --- | --- | --- |
 | Coordinator | Classify input, initialize state, route simple requests | `SDYJ_Agents/agents/coordinator.py` |
 | Planner | Generate and revise structured research plans | `SDYJ_Agents/agents/planner.py` |
-| Researcher | Execute source-specific retrieval tasks | `SDYJ_Agents/agents/researcher.py` |
-| Rapporteur | Synthesize findings into reports | `SDYJ_Agents/agents/rapporteur.py` |
+| Researcher | Execute source-specific retrieval tasks, optionally in parallel, and rewrite weak queries once | `SDYJ_Agents/agents/researcher.py` |
+| Rapporteur | Synthesize findings into Markdown, HTML, or JSON reports and apply verifier revision hints | `SDYJ_Agents/agents/rapporteur.py` |
+| Verifier | Score the report against evidence and trigger bounded revision when quality is low | `SDYJ_Agents/agents/verifier.py` |
 
 ## Shared State
 
@@ -47,9 +54,12 @@ fields include:
 | `evidence_items` | Deduplicated `E1/E2/...` evidence with URL, domain, query, date, and score |
 | `iteration_count` | Number of executed research tasks |
 | `max_iterations` | Runtime budget configured by user |
-| `final_report` | Generated Markdown or HTML |
+| `final_report` | Generated Markdown, HTML, or JSON report |
 | `report_metrics` | Citation density, duplicate URL ratio, tool success rate, and related report metrics |
 | `trace` | JSON-serializable run trace for nodes, LLM calls, tools, errors, and metrics |
+| `verification_result` | Latest Verifier critique, including scores and revision hints |
+| `revision_count` / `max_revisions` | Bounded revise-loop counters |
+| `plan_refined` | Whether the one-shot mid-flight plan refinement has already run |
 
 ## Tool Layer
 
@@ -57,7 +67,14 @@ The Researcher currently supports:
 
 - Tavily for web search.
 - arXiv for academic paper search.
-- MCP-compatible HTTP adapter for external tools.
+- MCP-compatible tools through either the legacy HTTP shim or the official MCP
+  Python SDK transports (`stdio` and `streamable_http`). See `docs/mcp.md`.
+
+Within a task, the Researcher can execute `(query, source)` jobs sequentially
+or through the bounded async executor in
+`SDYJ_Agents/workflow/parallel_executor.py`. Empty, failing, or low-relevance
+first-pass batches can trigger a one-shot reflection prompt that rewrites the
+queries before the task is marked complete.
 
 The tool interface returns a normalized shape:
 
@@ -96,7 +113,11 @@ The Researcher also normalizes raw results into evidence items:
 ```
 
 The Rapporteur uses these IDs in report claims and in the reference section, so
-reviewers can trace a claim back to source, query, and tool.
+reviewers can trace a claim back to source, query, and tool. Before the LLM
+Verifier makes a semantic judgment, SDYJ also runs a deterministic citation
+audit over the report. The audit flags invalid IDs such as `[E99]`, collected
+evidence that was never cited, and key-finding bullets without valid evidence
+IDs.
 
 ## Observability
 
@@ -106,13 +127,15 @@ contains:
 - workflow node events with latency and metadata;
 - LLM calls with latency, prompt/response size, and provider token usage when available;
 - retrieval tool calls with source, query, result count, latency, and error;
-- report metrics such as evidence count, citation count, duplicate URL ratio, and grounded key-finding rate.
+- reflection, plan-refinement, and verification events when v0.6 features are enabled;
+- report metrics such as evidence count, citation count, citation validity,
+  invalid citation count, duplicate URL ratio, and grounded key-finding rate.
 
 Use:
 
 ```bash
-python main.py inspect-run
-python main.py inspect-run <run-id>
+sdyj inspect-run
+sdyj inspect-run <run-id>
 ```
 
 ## Evaluation
@@ -120,10 +143,13 @@ python main.py inspect-run <run-id>
 `SDYJ_Agents/evaluation/` contains hard scenarios, metrics, and a runner. The
 default evaluation mode uses canned evidence for reproducibility; `--live`
 switches the Planner/Rapporteur/Coordinator to a real provider such as DeepSeek.
+v0.6 algorithm features stay opt-in in benchmark mode so the v0.5-compatible
+gate remains comparable.
 
 ```bash
-python main.py eval --max-scenarios 1
-python main.py eval --live --provider deepseek --model deepseek-v4-flash --scenario agent_reliability_hard
+sdyj eval --max-scenarios 1
+sdyj benchmark run --enable-verify --enable-reflect --enable-refine-plan --enable-parallel-tools
+sdyj eval --live --provider deepseek --model deepseek-v4-flash --scenario agent_reliability_hard
 ```
 
 ## Extension Points

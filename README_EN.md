@@ -1,73 +1,244 @@
 # SDYJ Multi Agents
 
+**A self-verifying, replayable, benchmarkable multi-agent research framework.**
+
 English | [中文](README.md)
 
 [![CI](https://github.com/hwfengcs/SDYJ_Multi_Agents/actions/workflows/ci.yml/badge.svg)](https://github.com/hwfengcs/SDYJ_Multi_Agents/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/sdyj-multi-agents?color=blue)](https://pypi.org/project/sdyj-multi-agents/)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/hwfengcs/SDYJ_Multi_Agents?style=social)](https://github.com/hwfengcs/SDYJ_Multi_Agents)
 
-SDYJ Multi Agents is a LangGraph-based multi-agent research framework. It turns an open-ended request into a controllable workflow: intent classification, planning, human review, multi-source retrieval, and synthesized Markdown, HTML, or JSON reports.
+<!-- Hosted demo badges are prepared but hidden until the URLs are verified:
+[![Open in Spaces](https://img.shields.io/badge/Spaces-Try_demo-blue)](https://huggingface.co/spaces/<owner>/sdyj-multi-agents)
+[![Trace Viewer](https://img.shields.io/badge/GitHub_Pages-Trace_Viewer-blue)](https://hwfengcs.github.io/SDYJ_Multi_Agents/trace-viewer-demo.html)
+-->
 
-The project focuses on practical agent operations: Trace v2 observability, deterministic replay, evidence-grounded reporting, benchmark gates, provider-agnostic LLM integration, tests, and CI.
+> SDYJ turns an open-ended research request into a controllable LangGraph workflow — plan, human review, multi-source retrieval, evidence-grounded synthesis — with a Trace v2 event timeline, deterministic replay, per-call cost tracking, and benchmark-gated CI built in. The goal is **agent operations**, not another LangGraph hello-world demo.
 
-## Highlights
+## Why SDYJ
 
-- **Multi-agent workflow**: Coordinator, Planner, Researcher, and Rapporteur cooperate through a shared state.
-- **Human-in-the-loop planning**: generated plans can be approved or revised before execution.
-- **Provider-agnostic LLM layer**: DeepSeek, OpenAI, Claude, and Gemini share one interface.
-- **Multi-source retrieval**: Tavily, arXiv, and an MCP adapter for external tools.
-- **Evidence-grounded reports**: retrieved results are normalized into `E1/E2/...` evidence items with URL deduplication, domain, query, date, and score metadata.
-- **Trace v2 observability**: every run records an event timeline with nodes, LLM calls, tool calls, routing decisions, latency, errors, report metrics, and replay cache.
-- **Deterministic replay**: replay a historical run from recorded LLM/tool I/O without calling real APIs.
-- **Practical benchmarks**: hard built-in agent scenarios support thresholds, `--fail-under`, summary comparison, trace completeness, and offline determinism checks.
-- **Engineering-first repo**: Python packaging, CLI entry point, tests, CI, docs, and examples.
+Most open-source agent frameworks ship a happy-path workflow and stop there. The moment something goes wrong — a tool returning empty, an LLM hallucinating a citation, a plan drifting off-topic — there is no good way to investigate, no replay, no regression test. SDYJ is built around the assumption that *agent operations are an evaluation problem*, not a prompting problem:
+
+- Every node, LLM call, tool call, routing decision, and report metric becomes a structured trace event.
+- Every run is replayable from recorded I/O — no real API calls needed to reproduce a failure.
+- Every release is gated on hard scenario benchmarks with thresholds, so quality regressions break CI before they ship.
+- Every retrieval result is normalized into deduplicated `E1/E2/...` evidence items linked back to the report claims.
+
+## Comparison
+
+| Capability                        | SDYJ Multi Agents | GPT Researcher | AutoGen | LangGraph examples |
+|-----------------------------------|:-:|:-:|:-:|:-:|
+| LangGraph state machine           | ✅ | ❌ | ⚠️ | ✅ |
+| Human-in-the-loop plan approval   | ✅ | ❌ | ⚠️ | ⚠️ |
+| Evidence-grounded `E1/E2/...` IDs | ✅ | ⚠️ | ❌ | ❌ |
+| Trace v2 event timeline           | ✅ | ❌ | ⚠️ | ❌ |
+| Deterministic replay from trace   | ✅ | ❌ | ❌ | ❌ |
+| Per-call token + USD cost in trace| ✅ | ⚠️ | ⚠️ | ❌ |
+| Benchmark gates with `--fail-under` | ✅ | ❌ | ❌ | ❌ |
+| 4 LLM providers w/ unified abstraction | ✅ | ✅ | ✅ | ⚠️ |
+| Self-verifying revise loop        | ✅ v0.6 alpha | ❌ | ❌ | ❌ |
+| Public benchmark numbers (GAIA / AssistantBench) | 🚧 v0.6 | ⚠️ | ⚠️ | ❌ |
+
+✅ first-class · ⚠️ partial / requires custom code · ❌ not provided · 🚧 in progress
+
+## Quick start (60 seconds)
+
+```bash
+conda env create -f environment.yml
+conda activate sdyj
+cp .env.example .env                    # Windows PowerShell: copy .env.example .env
+sdyj research "How should RAG agents be evaluated for reliability?"
+```
+
+Fill `DEEPSEEK_API_KEY` and `TAVILY_API_KEY` in `.env` before running live research. See [docs/conda-setup.md](docs/conda-setup.md) for the full environment guide.
+
+Run without a query to enter the interactive menu:
+
+```bash
+sdyj
+```
+
+Container quick start:
+
+```bash
+docker build -t sdyj:0.6 .
+docker run --rm sdyj:0.6 sdyj --help
+docker compose up --build
+```
+
+See [docs/docker.md](docs/docker.md) for Docker and Compose deployment notes.
 
 ## Architecture
 
 ```text
 User Query
-    |
-    v
-Coordinator -- classify intent / initialize state
-    |
-    v
-Planner -- build structured research plan
-    |
-    v
-Human Review -- approve or request changes
-    |
-    v
-Researcher -- Tavily / arXiv / MCP retrieval
-    |
-    v
-Rapporteur -- synthesize Markdown or HTML report
+    │
+    ▼
+Coordinator ─ classify intent / initialize state
+    │
+    ▼
+Planner ─ build structured research plan ─────────┐
+    │                                              │
+    ▼                                              │ revise
+Human Review ─ approve or request changes ────────┘
+    │ approve
+    ▼
+Researcher ─ Tavily / arXiv / MCP retrieval (loop)
+    │
+    ▼
+Rapporteur ─ Markdown / HTML / JSON report
+    │
+    ▼
+Verifier ─ critique + revise loop
+    │
+    ▼
+Trace v2 bundle → outputs/runs/<run-id>/
 ```
 
 See [docs/architecture.md](docs/architecture.md) for the full design notes.
 
-## Quick Start
+## What's new in v0.6 (in progress)
 
-### 1. Install
+- **Per-call token + USD cost tracking** in every LLM call — see [`SDYJ_Agents/utils/cost.py`](SDYJ_Agents/utils/cost.py). The CLI `inspect-run` shows a per-call cost table and the trace `metrics` block aggregates totals.
+- **Provider-agnostic usage capture**: OpenAI, Claude, DeepSeek, and Gemini now expose `last_usage` so cost estimation works regardless of provider.
+- **Verifier loop** — a critic agent re-reads the report against evidence and can trigger bounded Rapporteur revisions when claims are unsupported.
+- **Deterministic citation audit** — before the Verifier's LLM judgment, SDYJ checks that `[E1]` evidence IDs exist, key findings have valid citations, and invalid/unsupported claims become benchmark metrics.
+- **Reflexive Researcher** — empty, failing, or low-relevance query batches now trigger one query-rewrite retry.
+- **Mid-flight plan refinement** — after enough subtasks complete, the Planner can revise the remaining plan based on collected evidence.
+- **Parallel tool execution** — each task can run its `(query, source)` lookups concurrently with a bounded concurrency limit.
+- **Structured output path** — Planner, Rapporteur organization, Researcher reflection, and Verifier use provider-native JSON mode when available.
+- **Streamlit Web UI MVP** — run it locally with `streamlit run streamlit_app.py` or `streamlit run SDYJ_Agents/web/app.py`.
+- **PyPI release pipeline** with Trusted Publishers — see [docs/release-process.md](docs/release-process.md).
+- **Public benchmark scores** — GAIA Level 1 subset and AssistantBench results, including v0.5-vs-v0.6 ablations. *Coming soon.*
+- **Hugging Face Spaces deployment** for the Streamlit app. *Coming soon.*
+- **Real MCP integration** via the official `mcp` Python SDK for stdio and streamable HTTP, with the legacy HTTP shim preserved as fallback.
+
+The full v0.6 plan lives in [`docs/release-notes/v0.6.md`](docs/release-notes/v0.6.md) and [ROADMAP.md](ROADMAP.md).
+
+## v0.6 release-readiness snapshot (2026-05-11)
+
+The locally verifiable release work is mostly closed down:
+
+- Latest live-provider, benchmark, Docker, and hosted-demo status is tracked in
+  [docs/live-run-notes.md](docs/live-run-notes.md); this README is only a
+  release-readiness snapshot.
+- `python -m pytest`: `145 passed, 1 xfailed`.
+- `python -m ruff check SDYJ_Agents tests examples`: passed.
+- `python -m build` and `python -m twine check dist/*`: passed.
+- `sdyj release-check` / `python scripts/release_readiness.py` now bundles
+  doctor, pytest, ruff, build, twine, benchmark, and MCP local gates into one
+  no-publish preflight. External gaps are reported as blockers without printing
+  secret values.
+- GitHub Pages, Hugging Face Spaces, TestPyPI/PyPI, Docker, and GHCR now have
+  local docs, workflows, or static gates. Real public URLs, packages, and
+  images still require platform-side setup.
+- The public benchmark harness now commits synthetic GAIA-style smoke
+  `summary`, `manifest`, `predictions`, `graded`, and failure-analysis
+  artifacts. See
+  [docs/benchmark-results-public.md](docs/benchmark-results-public.md). This is
+  not a GAIA public score; it only proves the runner, grader, and artifact
+  layout are reproducible.
+- Benchmark comparison now includes per-metric regression analysis with
+  missing/new scenarios, feature-flag changes, root-cause rollups, and top
+  regressions/improvements.
+- The MCP filesystem demo no-secret `--check` passes locally. The GitHub MCP
+  `--check` fails safely without `GITHUB_PERSONAL_ACCESS_TOKEN` and prints only
+  boolean status.
+
+External conditions still required:
+
+- Configure a real `TAVILY_API_KEY`, then rerun the DeepSeek + Tavily + arXiv
+  live smoke and validate it with `inspect-run`, `replay`, and `diff-runs`.
+- Run Docker build/run/compose smoke on a Docker-enabled host.
+- Enable GitHub Pages, create the Hugging Face Space, configure Trusted
+  Publishers, and only then unhide the README badges with verified URLs.
+- Get Hugging Face GAIA dataset access plus real predictions before claiming a
+  GAIA Level 1 slice result.
+
+## Trace, replay, and inspection
+
+Every run writes a bundle under `outputs/runs/<run-id>/` and a backward-compatible copy at `outputs/traces/<run-id>.json`:
 
 ```bash
-git clone https://github.com/hwfengcs/SDYJ_Multi_Agents.git
-cd SDYJ_Multi_Agents
-python -m pip install -e ".[dev]"
+sdyj inspect-run                       # latest run, summary + tool calls + LLM cost table
+sdyj inspect-run <run-id> --timeline   # full event timeline
+sdyj runs list
+sdyj replay <run-id>                   # rebuild from recorded LLM/tool I/O, no real calls
+sdyj diff-runs <run-a> <run-b>
+sdyj doctor                            # local/deployment preflight, no API calls
 ```
 
-You can also install runtime dependencies only:
+Open `SDYJ_Agents/web/trace_viewer.html` in a browser to inspect `trace.json`
+or `events.jsonl` with client-side filters and event details.
+
+See [docs/trace-replay.md](docs/trace-replay.md).
+
+## Benchmarks
+
+Offline benchmarks use deterministic hard scenarios with canned evidence, so they require no real API keys and run in CI:
 
 ```bash
-python -m pip install -r requirements.txt
+sdyj list-scenarios
+sdyj benchmark run --max-scenarios 1 --max-iterations 2
+sdyj benchmark run --fail-under 0.75            # gate for CI regression blocking
+sdyj benchmark run --determinism-repeats 2      # offline determinism check
+sdyj benchmark run --compare-summary outputs/eval_reports/eval_summary_YYYYMMDD_HHMMSS.json
 ```
 
-### 2. Configure Environment Variables
+`--compare-summary` and `sdyj benchmark compare` inspect key per-metric
+regressions, missing scenarios, feature-flag changes, and root-cause rollups, so
+a flat aggregate score cannot hide citation, tool, or trace degradation.
+
+Live DeepSeek evaluation isolates model quality while keeping retrieval canned for reproducibility:
+
+```bash
+sdyj benchmark run \
+  --live \
+  --provider deepseek \
+  --model deepseek-v4-flash \
+  --scenario agent_reliability_hard \
+  --max-iterations 2
+```
+
+Add `--live-search` for real retrieval. See [docs/benchmark.md](docs/benchmark.md).
+
+The public benchmark harness now has a reproducible entrypoint:
+
+```bash
+sdyj benchmark external --suite gaia --source local --limit 3 --output-dir outputs/public_benchmarks
+```
+
+The local source is a synthetic GAIA-style smoke fixture; it only proves the
+runner, grader, and artifact layout. Real GAIA Level 1 runs should use
+`--source hf` after Hugging Face login and dataset access are confirmed. Results
+are tracked in [docs/benchmark-results-public.md](docs/benchmark-results-public.md).
+
+## Project layout
+
+```text
+SDYJ_Agents/
+  agents/       # Coordinator / Planner / Researcher / Rapporteur / Verifier
+  cli/          # argparse CLI and interactive menu
+  llm/          # provider-agnostic LLM wrappers (OpenAI / Claude / Gemini / DeepSeek)
+  prompts/      # Jinja prompt templates
+  tools/        # Tavily, arXiv, MCP adapters
+  workflow/     # LangGraph graph, state, nodes
+  utils/        # config, logging, evidence, tracing, cost
+  evaluation/   # benchmark scenarios, metrics, runner
+docs/           # architecture, trace/replay, benchmark, release process
+examples/       # small reproducible examples
+tests/          # unit tests with fake LLM/search
+```
+
+## Configuration
 
 ```bash
 copy .env.example .env
 ```
 
-Fill at least one LLM API key. DeepSeek is the recommended first provider:
+Fill at least one LLM API key. DeepSeek is the recommended first provider (cheapest):
 
 ```bash
 LLM_PROVIDER=deepseek
@@ -76,140 +247,43 @@ DEEPSEEK_API_KEY=sk-...
 TAVILY_API_KEY=tvly-...
 ```
 
-Claude and Gemini use the official variable names:
+Other providers use their official environment variable names — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`. Legacy aliases `CLAUDE_API_KEY` and `GEMINI_API_KEY` remain supported.
+
+MCP setup is optional. See [docs/mcp.md](docs/mcp.md) for stdio,
+streamable HTTP, and legacy HTTP configuration.
+
+## Output formats
+
+- Markdown — best for version control, editing, and report drafts.
+- HTML — best for browser-based sharing and demos.
+- JSON — best for downstream automation, regression checks, and integration.
+
+Sample artifacts: [examples/sample_report.md](examples/sample_report.md) · [examples/sample_trace.json](examples/sample_trace.json) · [examples/eval_summary.json](examples/eval_summary.json).
+
+## Develop
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-...
-GOOGLE_API_KEY=AIza...
-```
-
-Legacy aliases `CLAUDE_API_KEY` and `GEMINI_API_KEY` are still supported.
-
-### 3. Run
-
-```bash
-python main.py config-info
-python main.py list-models deepseek
-python main.py research "Summarize recent trends in AI agent evaluation"
-```
-
-After editable installation:
-
-```bash
-sdyj research "Compare the design trade-offs of LangGraph, AutoGen, and CrewAI"
-```
-
-Common options:
-
-```bash
-python main.py research \
-  --provider deepseek \
-  --model deepseek-v4-flash \
-  --max-iterations 3 \
-  --output-format markdown \
-  --auto-approve \
-  "How should RAG agents be evaluated for reliability?"
-```
-
-Run without a query to open the interactive menu:
-
-```bash
-python main.py
-```
-
-### 4. Trace / Replay
-
-Runs write a bundle under `outputs/runs/<run-id>/` and keep a backward-compatible copy under `outputs/traces/<run-id>.json`:
-
-```bash
-python main.py inspect-run
-python main.py inspect-run <run-id> --timeline
-python main.py runs list
-python main.py replay <run-id>
-python main.py diff-runs <run-a> <run-b>
-```
-
-See [docs/trace-replay.md](docs/trace-replay.md).
-
-### 5. Benchmark
-
-Offline benchmarks use deterministic hard scenarios and canned evidence, so no real API key is required:
-
-```bash
-python main.py list-scenarios
-python main.py benchmark run --max-scenarios 1 --max-iterations 2
-python main.py benchmark run --fail-under 0.75
-python main.py benchmark run --determinism-repeats 2
-```
-
-Live DeepSeek evaluation uses `DEEPSEEK_API_KEY` from `.env` while still defaulting to canned evidence for reproducibility:
-
-```bash
-python main.py benchmark run \
-  --live \
-  --provider deepseek \
-  --model deepseek-v4-flash \
-  --scenario agent_reliability_hard \
-  --max-iterations 2
-```
-
-Add `--live-search` if you also want to evaluate real retrieval.
-
-The older `python main.py eval ...` command remains supported. See [docs/benchmark.md](docs/benchmark.md).
-
-## Project Layout
-
-```text
-SDYJ_Agents/
-  agents/       # Coordinator / Planner / Researcher / Rapporteur
-  cli/          # argparse CLI and interactive menu
-  llm/          # provider-agnostic LLM wrappers
-  prompts/      # Jinja prompt templates
-  tools/        # Tavily, arXiv, MCP adapters
-  workflow/     # LangGraph graph and state
-  utils/        # config, logging, evidence, tracing
-  evaluation/   # benchmark scenarios, metrics, runner
-docs/           # architecture, trace/replay, benchmark, roadmap
-examples/       # small reproducible examples
-tests/          # unit tests with fake LLM/search
-```
-
-## Output
-
-- Markdown: best for version control, editing, and report drafts.
-- HTML: best for browser-based sharing and demos.
-- JSON: best for downstream automation, regression checks, and integration.
-
-Generated artifacts are written to `outputs/`, which is ignored by git:
-
-- `outputs/research_report_*.md|html|json`: research reports.
-- `outputs/runs/<run-id>/`: Trace v2 run bundles.
-- `outputs/traces/*.json`: backward-compatible run traces.
-- `outputs/eval_reports/`: evaluation reports and summaries.
-
-Repository examples are available in [examples/sample_report.md](examples/sample_report.md), [examples/sample_trace.json](examples/sample_trace.json), and [examples/eval_summary.json](examples/eval_summary.json).
-
-## Test
-
-```bash
+conda env update -n sdyj -f environment.yml --prune
+conda activate sdyj
 pytest
 ruff check SDYJ_Agents tests
 ```
 
-Unit tests use fake LLM and fake search implementations, so real API keys are not required.
+Conda is the default development environment. Unit tests use fake LLM and fake search implementations, so real API keys are not required.
 
 ## Roadmap
 
-v0.5 includes:
+| Milestone | Status |
+|-----------|--------|
+| v0.1 — engineering baseline (CI, tests, license, docs) | ✅ |
+| v0.2 — evidence-grounded reports with deduplicated source IDs | ✅ |
+| v0.3 — agent observability (Trace v2, latency, error rate) | ✅ |
+| v0.4 — evaluation suite with hard scenarios and report quality metrics | ✅ |
+| v0.5 — Trace v2, deterministic replay, benchmark gates, JSON output | ✅ |
+| **v0.6 — self-verifying loop, cost tracking, public benchmarks, Web UI, MCP** | 🚧 |
+| v0.7 — partial replay, OpenTelemetry export, plugin retrieval registry | ⏳ |
 
-- Trace v2 event timeline and run bundles. Done.
-- Deterministic replay. Done.
-- Benchmark gates, thresholds, summary comparison, and trace completeness. Done.
-- JSON output. Done.
-
-Next work: partial replay, external benchmark suites, a stronger tool registry, OpenTelemetry export, and a run-inspection web UI.
-
-See [ROADMAP.md](ROADMAP.md).
+See [ROADMAP.md](ROADMAP.md) for the full plan.
 
 ## Contributing
 

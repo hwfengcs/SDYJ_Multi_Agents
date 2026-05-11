@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SDYJ Multi Agents</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #17202a;
+      background: #f7f8fb;
+    }
+    main {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 56px 24px;
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: 36px;
+      line-height: 1.1;
+    }
+    p {
+      color: #435064;
+      font-size: 17px;
+      line-height: 1.6;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+      margin-top: 32px;
+    }
+    a.card {
+      display: block;
+      min-height: 120px;
+      padding: 20px;
+      border: 1px solid #d9deea;
+      border-radius: 8px;
+      background: #fff;
+      color: inherit;
+      text-decoration: none;
+    }
+    a.card:hover {
+      border-color: #5976d6;
+    }
+    .card strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 18px;
+    }
+    .card span {
+      color: #5b6678;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>SDYJ Multi Agents</h1>
+    <p>Self-verifying, replayable, benchmarkable multi-agent research framework.</p>
+    <section class="grid" aria-label="Documentation links">
+      <a class="card" href="trace-viewer-demo.html">
+        <strong>Trace Viewer</strong>
+        <span>Open the static trace viewer and drag in a trace.json or events.jsonl file.</span>
+      </a>
+      <a class="card" href="pages-deploy.md">
+        <strong>Pages Deploy</strong>
+        <span>Enable GitHub Pages, verify the public Trace Viewer URL, and update badges honestly.</span>
+      </a>
+      <a class="card" href="benchmark.md">
+        <strong>Benchmark Guide</strong>
+        <span>Run deterministic gates and external GAIA-style benchmark slices.</span>
+      </a>
+      <a class="card" href="benchmark-results-public.md">
+        <strong>Public Results</strong>
+        <span>Track public benchmark status, smoke artifacts, and blocked external scores.</span>
+      </a>
+      <a class="card" href="huggingface-spaces-deploy.md">
+        <strong>Spaces Deploy</strong>
+        <span>Prepare the Streamlit demo for Hugging Face Spaces.</span>
+      </a>
+      <a class="card" href="release-process.md">
+        <strong>Release Process</strong>
+        <span>Build, check, and publish TestPyPI/PyPI releases.</span>
+      </a>
+      <a class="card" href="docker.md">
+        <strong>Docker</strong>
+        <span>Build a local container, run CLI smoke checks, or start the Streamlit app with Compose.</span>
+      </a>
+      <a class="card" href="ghcr.md">
+        <strong>GHCR</strong>
+        <span>Build a container image in GitHub Actions and push only after manual approval.</span>
+      </a>
+      <a class="card" href="release-notes/v0.6.md">
+        <strong>v0.6 Notes</strong>
+        <span>Review shipped v0.6 alpha features and remaining blockers.</span>
+      </a>
+    </section>
+  </main>
+</body>
+</html>

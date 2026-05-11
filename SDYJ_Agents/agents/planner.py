@@ -10,6 +10,47 @@ from typing import Optional
 from ..workflow.state import ResearchState, PlanStructure, SubTask
 from ..llm.base import BaseLLM
 from ..prompts.loader import PromptLoader
+from ..utils.evidence import format_evidence_for_prompt
+from ..utils.structured_output import generate_json_object
+
+
+# After this many completed sub-tasks, give the Planner a chance to refine
+# the *remaining* sub-tasks based on the evidence collected so far. Set to
+# something larger than 1 so the refine call has actual signal to work
+# with, but small enough that mid-flight pivots can still happen.
+DEFAULT_REFINE_AFTER_N_TASKS = 2
+
+
+PLAN_JSON_SCHEMA = {
+    "type": "object",
+    "required": ["research_goal", "sub_tasks", "completion_criteria", "estimated_iterations"],
+    "properties": {
+        "research_goal": {"type": "string"},
+        "sub_tasks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["task_id", "description", "search_queries", "sources", "priority"],
+                "properties": {
+                    "task_id": {"type": "integer"},
+                    "description": {"type": "string"},
+                    "search_queries": {"type": "array", "items": {"type": "string"}},
+                    "sources": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["tavily", "arxiv", "mcp"]},
+                    },
+                    "priority": {"type": "integer"},
+                    "status": {"type": "string"},
+                },
+                "additionalProperties": True,
+            },
+        },
+        "completion_criteria": {"type": "string"},
+        "estimated_iterations": {"type": "integer"},
+        "refinement_rationale": {"type": "string"},
+    },
+    "additionalProperties": True,
+}
 
 
 class Planner:
@@ -25,15 +66,31 @@ class Planner:
     - Decide when to continue research or generate report
     """
 
-    def __init__(self, llm: BaseLLM):
+    def __init__(
+        self,
+        llm: BaseLLM,
+        enable_plan_refinement: bool = True,
+        refine_after_n_tasks: int = DEFAULT_REFINE_AFTER_N_TASKS,
+    ):
         """
         Initialize the Planner.
 
         Args:
             llm: Language model instance for planning
+            enable_plan_refinement: When True (the default in v0.6+), the
+                workflow asks the planner to refine remaining sub-tasks
+                once enough sub-tasks have completed and there is real
+                evidence to react to. Set to False to restore the v0.5
+                fixed-plan behaviour — useful for the v0.5-vs-v0.6
+                ablation in evaluation runs.
+            refine_after_n_tasks: How many sub-tasks must complete before
+                refinement is triggered. The default is intentionally
+                small enough that a 3–5 task plan can still pivot.
         """
         self.llm = llm
         self.prompt_loader = PromptLoader()
+        self.enable_plan_refinement = enable_plan_refinement
+        self.refine_after_n_tasks = max(1, int(refine_after_n_tasks))
 
     def create_research_plan(self, state: ResearchState) -> ResearchState:
         """
@@ -55,20 +112,13 @@ class Planner:
             user_feedback=user_feedback if user_feedback else None
         )
 
-        # Generate plan
-        response = self.llm.generate(prompt, temperature=0.7)
-
-        # Parse JSON response
         try:
-            # Extract JSON from response (in case LLM adds extra text)
-            start = response.find('{')
-            end = response.rfind('}') + 1
-            if start != -1 and end > start:
-                json_str = response[start:end]
-                plan = json.loads(json_str)
-            else:
-                # Fallback plan if parsing fails
-                plan = self._create_fallback_plan(query)
+            plan = generate_json_object(
+                self.llm,
+                prompt,
+                schema=PLAN_JSON_SCHEMA,
+                temperature=0.7,
+            )
 
             # Add status to subtasks
             for task in plan.get('sub_tasks', []):
@@ -78,7 +128,7 @@ class Planner:
             state['research_plan'] = plan
             state['estimated_iterations'] = plan.get('estimated_iterations', 3)
 
-        except json.JSONDecodeError:
+        except (ValueError, TypeError, json.JSONDecodeError):
             # Create fallback plan
             plan = self._create_fallback_plan(query)
             state['research_plan'] = plan
@@ -131,17 +181,15 @@ class Planner:
             modifications=modifications
         )
 
-        response = self.llm.generate(prompt, temperature=0.7)
-
-        # Parse modified plan
         try:
-            start = response.find('{')
-            end = response.rfind('}') + 1
-            if start != -1 and end > start:
-                json_str = response[start:end]
-                modified_plan = json.loads(json_str)
-                state['research_plan'] = modified_plan
-        except json.JSONDecodeError:
+            modified_plan = generate_json_object(
+                self.llm,
+                prompt,
+                schema=PLAN_JSON_SCHEMA,
+                temperature=0.7,
+            )
+            state['research_plan'] = modified_plan
+        except (ValueError, TypeError, json.JSONDecodeError):
             # Keep current plan if parsing fails
             pass
 
@@ -209,6 +257,178 @@ class Planner:
             if task.get('status') == 'pending':
                 return task
 
+        return None
+
+    def refine_plan(self, state: ResearchState) -> ResearchState:
+        """Adapt the *remaining* sub-tasks based on what we have learned.
+
+        Called once mid-flight (after ``DEFAULT_REFINE_AFTER_N_TASKS``
+        sub-tasks have completed) so the Planner can drop redundant work,
+        tighten weak queries, or add a follow-up sub-task that the
+        evidence itself surfaced. The set of completed sub-tasks is kept
+        intact — only pending sub-tasks may be modified.
+
+        Sets ``state['plan_refined'] = True`` so the workflow does not
+        re-enter refinement on the same run.
+        """
+        plan = state.get('research_plan') or {}
+        sub_tasks = list(plan.get('sub_tasks') or [])
+        evidence_items = state.get('evidence_items') or []
+
+        completed = [task for task in sub_tasks if task.get('status') == 'completed']
+        remaining = [task for task in sub_tasks if task.get('status') != 'completed']
+        if not remaining:
+            # Nothing left to refine; mark refined to avoid retrying.
+            state['plan_refined'] = True
+            return state
+
+        prompt = self.prompt_loader.load(
+            'planner_refine_plan',
+            query=state.get('query', ''),
+            research_goal=plan.get('research_goal', state.get('query', '')),
+            completed_count=len(completed),
+            full_plan_subtasks=json.dumps(sub_tasks, ensure_ascii=False, indent=2),
+            completed_subtasks_brief=self._brief_subtasks(completed),
+            remaining_subtasks_brief=self._brief_subtasks(remaining),
+            evidence_so_far=format_evidence_for_prompt(evidence_items, limit=15)
+            if evidence_items
+            else '(no evidence collected yet)',
+        )
+
+        try:
+            refined_plan = generate_json_object(
+                self.llm,
+                prompt,
+                schema=PLAN_JSON_SCHEMA,
+                temperature=0.3,
+                max_tokens=2000,
+            )
+        except Exception:
+            # If the refine call fails we fall back to the original plan.
+            state['plan_refined'] = True
+            return state
+
+        if refined_plan:
+            self._merge_refined_plan_into_state(state, refined_plan, completed)
+
+        # Always set plan_refined so we don't retry. If parsing failed we
+        # still mark it refined; the original plan stays in place.
+        state['plan_refined'] = True
+        return state
+
+    def _brief_subtasks(self, subtasks: list) -> str:
+        if not subtasks:
+            return '(none)'
+        lines = []
+        for task in subtasks:
+            queries = task.get('search_queries') or []
+            qstr = ', '.join(f'"{q}"' for q in queries[:3])
+            lines.append(
+                f"- [{task.get('task_id')}] ({task.get('status', 'pending')}) "
+                f"{task.get('description', '')} | queries: {qstr}"
+            )
+        return '\n'.join(lines)
+
+    @staticmethod
+    def _parse_refined_plan(response: str) -> Optional[dict]:
+        """Pull the JSON plan out of the LLM response, tolerating fences."""
+        try:
+            from ..llm.base import parse_json_object
+
+            return parse_json_object(response)
+        except (ValueError, json.JSONDecodeError):
+            return None
+
+    @staticmethod
+    def _merge_refined_plan_into_state(
+        state: ResearchState,
+        refined_plan: dict,
+        completed_subtasks: list,
+    ) -> None:
+        """Apply the refined plan, preserving completed task metadata.
+
+        We always keep the *actual* completed-task records that the
+        Researcher updated (with status=completed) — even if the LLM left
+        them out of its output by mistake — and append the refined
+        non-completed tasks behind them. This guarantees we never lose
+        evidence-of-execution that the trace already has.
+        """
+        if not refined_plan or not isinstance(refined_plan, dict):
+            return
+        new_subtasks_raw = refined_plan.get('sub_tasks') or []
+        if not isinstance(new_subtasks_raw, list):
+            return
+
+        completed_ids = {task.get('task_id') for task in completed_subtasks}
+        new_pending = []
+        for task in new_subtasks_raw:
+            if not isinstance(task, dict):
+                continue
+            # The LLM is told to preserve completed tasks; in practice we
+            # *re-insert* the originals from state to be safe, so we drop
+            # any duplicate/edited completed entries here.
+            if task.get('task_id') in completed_ids:
+                continue
+            task.setdefault('status', 'pending')
+            # Reset _reflected so a refined query gets a fresh chance to
+            # trigger reflection if it also fails.
+            task.pop('_reflected', None)
+            new_pending.append(task)
+
+        merged = list(completed_subtasks) + new_pending
+        # Re-key any task with a missing or duplicate task_id so downstream
+        # code (Researcher, Verifier prompts) keeps working.
+        existing_ids = {
+            Planner._normalize_task_id(task.get('task_id'))
+            for task in completed_subtasks
+        }
+        existing_ids.discard(None)
+        next_id = max(existing_ids, default=0) + 1
+        for task in new_pending:
+            normalized_id = Planner._normalize_task_id(task.get('task_id'))
+            if normalized_id is None or normalized_id in existing_ids:
+                while next_id in existing_ids:
+                    next_id += 1
+                task['task_id'] = next_id
+                existing_ids.add(next_id)
+                next_id += 1
+            else:
+                task['task_id'] = normalized_id
+                existing_ids.add(normalized_id)
+                next_id = max(next_id, normalized_id + 1)
+
+        plan = state.get('research_plan') or {}
+        plan['sub_tasks'] = merged
+        if 'research_goal' in refined_plan:
+            plan['research_goal'] = refined_plan['research_goal']
+        if 'completion_criteria' in refined_plan:
+            plan['completion_criteria'] = refined_plan['completion_criteria']
+        if 'estimated_iterations' in refined_plan and isinstance(
+            refined_plan['estimated_iterations'], int
+        ):
+            plan['estimated_iterations'] = refined_plan['estimated_iterations']
+        if 'refinement_rationale' in refined_plan:
+            plan.setdefault('history', []).append(
+                {
+                    'event': 'plan_refined',
+                    'rationale': refined_plan['refinement_rationale'],
+                    'completed_count': len(completed_subtasks),
+                }
+            )
+        state['research_plan'] = plan
+
+    @staticmethod
+    def _normalize_task_id(value) -> Optional[int]:
+        """Return a positive integer task id, or None for unusable IDs."""
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value if value > 0 else None
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.isdigit():
+                parsed = int(stripped)
+                return parsed if parsed > 0 else None
         return None
 
     def format_plan_for_display(self, plan: PlanStructure) -> str:

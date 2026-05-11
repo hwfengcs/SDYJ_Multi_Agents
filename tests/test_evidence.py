@@ -1,4 +1,5 @@
 from SDYJ_Agents.utils.evidence import (
+    audit_report_citations,
     build_evidence_from_results,
     calculate_evidence_metrics,
     normalize_url,
@@ -53,3 +54,36 @@ def test_evidence_metrics_count_citations_and_duplicate_urls():
     assert metrics["duplicate_url_count"] == 1
     assert metrics["evidence_count"] == 1
     assert metrics["citation_count"] == 1
+
+
+def test_audit_report_citations_flags_invalid_and_unsupported_claims():
+    evidence = [
+        {"evidence_id": "E1", "title": "Trace", "snippet": "trace"},
+        {"evidence_id": "E2", "title": "Cost", "snippet": "cost"},
+    ]
+    report = "- grounded claim [E1]\n- cites a missing source [E99]\n- no citation here\n"
+
+    audit = audit_report_citations(report, evidence)
+
+    assert audit["invalid_citation_ids"] == ["E99"]
+    assert audit["unused_evidence_ids"] == ["E2"]
+    assert audit["valid_citation_count"] == 1
+    assert audit["invalid_citation_count"] == 1
+    assert audit["unsupported_key_finding_count"] == 2
+    assert audit["grounded_key_finding_rate"] == 1 / 3
+    assert audit["citation_audit_passed"] is False
+
+
+def test_evidence_metrics_use_valid_citations_only():
+    evidence = [
+        {"evidence_id": "E1", "title": "Trace", "snippet": "trace"},
+        {"evidence_id": "E2", "title": "Cost", "snippet": "cost"},
+    ]
+
+    metrics = calculate_evidence_metrics([], evidence, "- valid [E1]\n- invalid [E99]\n")
+
+    assert metrics["citation_count"] == 2
+    assert metrics["valid_citation_count"] == 1
+    assert metrics["invalid_citation_count"] == 1
+    assert metrics["citation_validity"] == 0.5
+    assert metrics["citation_evidence_coverage"] == 0.5

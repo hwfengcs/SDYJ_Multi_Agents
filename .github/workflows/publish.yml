@@ -1,0 +1,177 @@
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which index to publish to"
+        type: choice
+        required: true
+        default: "testpypi"
+        options:
+          - testpypi
+          - pypi
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Conda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          activate-environment: sdyj-build
+          python-version: "3.12"
+          channels: conda-forge
+          channel-priority: strict
+          auto-update-conda: true
+
+      - name: Validate publish target
+        shell: bash -el {0}
+        env:
+          PUBLISH_TARGET: ${{ github.event.inputs.target || 'pypi' }}
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+
+          with open("pyproject.toml", "rb") as handle:
+              version = tomllib.load(handle)["project"]["version"]
+
+          target = os.environ["PUBLISH_TARGET"]
+          event_name = os.environ["GITHUB_EVENT_NAME"]
+          ref_type = os.environ.get("GITHUB_REF_TYPE", "")
+          ref_name = os.environ.get("GITHUB_REF_NAME", "")
+
+          print(f"Publish target: {target}")
+          print(f"Package version: {version}")
+
+          if target not in {"testpypi", "pypi"}:
+              raise SystemExit(f"Unsupported publish target: {target}")
+
+          if target == "pypi" or event_name == "release":
+              expected_tag = f"v{version}"
+              if ref_type != "tag" or ref_name != expected_tag:
+                  raise SystemExit(
+                      "PyPI publishing must run from the exact package tag "
+                      f"{expected_tag}; got {ref_type or 'unknown'} {ref_name or 'unknown'}."
+                  )
+
+          if target == "testpypi":
+              print("TestPyPI target may run from a branch for pre-release smoke.")
+          PY
+
+      - name: Install build tooling
+        shell: bash -el {0}
+        run: conda install -y -c conda-forge python-build twine
+
+      - name: Install project for release smoke tests
+        shell: bash -el {0}
+        run: python -m pip install -e ".[dev,web]"
+
+      - name: Run release smoke tests
+        shell: bash -el {0}
+        run: |
+          python -m pytest \
+            tests/test_version.py \
+            tests/test_package_artifacts.py \
+            tests/test_external_benchmark.py \
+            tests/test_cli.py \
+            tests/test_trace_viewer.py \
+            tests/test_hf_entrypoint.py \
+            tests/test_docker_assets.py \
+            tests/test_deploy_readiness.py \
+            tests/test_publish_workflow.py
+          python -m ruff check SDYJ_Agents tests examples
+
+      - name: Build sdist and wheel
+        shell: bash -el {0}
+        run: python -m build
+
+      - name: Verify metadata
+        shell: bash -el {0}
+        run: python -m twine check dist/*
+
+      - name: Validate wheel install smoke
+        shell: bash -el {0}
+        run: |
+          python -m venv .wheel-smoke
+          source .wheel-smoke/bin/activate
+          python -m pip install --upgrade pip
+          WHEEL="$(ls dist/*.whl)"
+          python -m pip install "${WHEEL}[all]"
+          sdyj --version
+          sdyj --help
+          DEEPSEEK_API_KEY=dummy sdyj doctor --provider deepseek
+          python - <<'PY'
+          from importlib import resources
+
+          import SDYJ_Agents
+
+          assert SDYJ_Agents.__version__
+          assert (resources.files("SDYJ_Agents.prompts") / "rapporteur_revise.md").is_file()
+          assert (resources.files("SDYJ_Agents.web") / "trace_viewer.html").is_file()
+          assert (
+              resources.files("SDYJ_Agents.benchmarks.fixtures") / "gaia_mini.jsonl"
+          ).is_file()
+          PY
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/sdyj-multi-agents
+    permissions:
+      id-token: write  # OIDC for Trusted Publishers
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+  publish-pypi:
+    name: Publish to PyPI
+    if: (github.event_name == 'release' && !github.event.release.prerelease) || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/sdyj-multi-agents
+    permissions:
+      id-token: write  # OIDC for Trusted Publishers
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true

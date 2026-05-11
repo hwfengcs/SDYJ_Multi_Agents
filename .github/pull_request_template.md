@@ -2,6 +2,7 @@
 
 ## Testing
 
+- [ ] `conda env update -n sdyj -f environment.yml --prune`
 - [ ] `pytest`
 - [ ] `ruff check SDYJ_Agents tests`
 

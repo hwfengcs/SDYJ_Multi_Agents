@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
 from uuid import uuid4
 
-from ..llm.base import BaseLLM
+from ..llm.base import BaseLLM, parse_json_object
+from .cost import aggregate_trace_cost, estimate_call_cost_usd, normalize_usage
 
 
 def utc_now_iso() -> str:
@@ -326,6 +327,12 @@ def finalize_trace(trace: Optional[Dict[str, Any]], metrics: Optional[Dict[str, 
     trace["completed_at"] = utc_now_iso()
     if metrics:
         trace.setdefault("metrics", {}).update(metrics)
+    # Roll up token + cost across all recorded LLM calls. We re-run the
+    # aggregator on every finalize call so reruns and merge_trace_state stay
+    # consistent. unpriced calls are reported separately so users can see when
+    # the estimate is partial.
+    cost_summary = aggregate_trace_cost(trace)
+    trace.setdefault("metrics", {}).update(cost_summary)
 
 
 def merge_trace_state(
@@ -595,6 +602,10 @@ def summarize_trace(trace: Dict[str, Any]) -> Dict[str, Any]:
         "overall_score": metrics.get("overall_score"),
         "tool_success_rate": metrics.get("tool_success_rate"),
         "trace_completeness": metrics.get("trace_completeness"),
+        "total_prompt_tokens": metrics.get("total_prompt_tokens"),
+        "total_completion_tokens": metrics.get("total_completion_tokens"),
+        "total_tokens": metrics.get("total_tokens"),
+        "total_cost_usd": metrics.get("total_cost_usd"),
     }
 
 
@@ -697,6 +708,45 @@ class InstrumentedLLM(BaseLLM):
             )
             raise
 
+    def generate_json(self, prompt: str, schema: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
+        """Generate a JSON object while preserving the same trace semantics."""
+        started = time.perf_counter()
+        call_id = f"L{len(self.trace.get('llm_calls', [])) + 1}" if self.trace else None
+        try:
+            if hasattr(self.inner, "generate_json"):
+                response_obj = self.inner.generate_json(prompt, schema=schema, **kwargs)
+            else:
+                schema_hint = ""
+                if schema:
+                    schema_hint = (
+                        "\n\nReturn a single valid JSON object matching this schema. "
+                        "Do not include Markdown fences or prose.\n"
+                        f"{json.dumps(schema, ensure_ascii=False, indent=2)}"
+                    )
+                response_obj = parse_json_object(self.inner.generate(prompt + schema_hint, **kwargs))
+            response_text = json.dumps(response_obj, ensure_ascii=False, default=_json_default)
+            latency_ms = _safe_round_ms(time.perf_counter() - started)
+            self._record_call(
+                call_id=call_id,
+                prompt=prompt,
+                response=response_text,
+                kwargs={**kwargs, "response_format": "json_object"},
+                latency_ms=latency_ms,
+                error=None,
+            )
+            return response_obj
+        except Exception as exc:
+            latency_ms = _safe_round_ms(time.perf_counter() - started)
+            self._record_call(
+                call_id=call_id,
+                prompt=prompt,
+                response="",
+                kwargs={**kwargs, "response_format": "json_object"},
+                latency_ms=latency_ms,
+                error=str(exc),
+            )
+            raise
+
     def _record_call(
         self,
         call_id: str | None,
@@ -708,6 +758,15 @@ class InstrumentedLLM(BaseLLM):
     ) -> None:
         if not self.trace:
             return
+        usage_dict = getattr(self.inner, "last_usage", None)
+        prompt_tokens, completion_tokens = normalize_usage(usage_dict)
+        provider = self.trace.get("provider")
+        cost_usd = estimate_call_cost_usd(
+            provider=provider,
+            model=self.model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
         event = {
             "call_id": call_id,
             "model": self.model,
@@ -718,9 +777,13 @@ class InstrumentedLLM(BaseLLM):
             "response_hash": _sha256_text(response),
             "temperature": kwargs.get("temperature"),
             "max_tokens": kwargs.get("max_tokens"),
+            "response_format": kwargs.get("response_format"),
             "prompt_preview": prompt[:160].replace("\n", " "),
             "response_preview": response[:240].replace("\n", " "),
-            "usage": getattr(self.inner, "last_usage", None),
+            "usage": usage_dict,
+            "prompt_tokens_actual": prompt_tokens,
+            "completion_tokens_actual": completion_tokens,
+            "cost_usd": cost_usd,
             "error": error,
             "timestamp": utc_now_iso(),
         }
@@ -751,6 +814,9 @@ class InstrumentedLLM(BaseLLM):
                 "response_hash": event["response_hash"],
                 "response_preview": event["response_preview"],
                 "usage": event["usage"],
+                "prompt_tokens_actual": prompt_tokens,
+                "completion_tokens_actual": completion_tokens,
+                "cost_usd": cost_usd,
             },
             metadata={"call_id": call_id},
             error=error,

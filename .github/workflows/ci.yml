@@ -17,21 +17,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Conda
+        uses: conda-incubator/setup-miniconda@v3
         with:
+          miniforge-version: latest
+          activate-environment: sdyj-ci
           python-version: ${{ matrix.python-version }}
+          channels: conda-forge
+          channel-priority: strict
+          auto-update-conda: true
 
-      - name: Install package
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+      - name: Install Conda environment
+        shell: bash -el {0}
+        run: conda env update --name sdyj-ci --file environment.yml --prune
 
       - name: Lint
+        shell: bash -el {0}
         run: ruff check SDYJ_Agents tests
 
       - name: Test
+        shell: bash -el {0}
         env:
           DEEPSEEK_API_KEY: dummy
           LLM_PROVIDER: deepseek
         run: pytest
+
+      - name: Benchmark gate
+        shell: bash -el {0}
+        env:
+          DEEPSEEK_API_KEY: dummy
+          LLM_PROVIDER: deepseek
+        run: sdyj benchmark run --max-scenarios 1 --max-iterations 2 --fail-under 0.75 --output-dir outputs/ci_benchmark

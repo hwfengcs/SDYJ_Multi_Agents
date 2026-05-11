@@ -30,7 +30,7 @@ Trace v2 keeps the original summary arrays and adds an event timeline:
 - `llm_calls`: model latency, prompt/response sizes, hashes, previews, usage.
 - `tool_calls`: source, query, task, result count, latency, and errors.
 - `events`: normalized timeline events for nodes, LLM calls, tools, routing
-  decisions, human approval, and artifacts.
+  decisions, human approval, plan refinement, and artifacts.
 - `replay_cache`: recorded LLM responses and tool results for deterministic
   replay.
 - `artifacts`: paths to the run bundle files.
@@ -43,26 +43,38 @@ redacted from snapshots.
 Show the latest run:
 
 ```bash
-python main.py inspect-run
+sdyj inspect-run
 ```
 
 Show a specific run with the event timeline:
 
 ```bash
-python main.py inspect-run <run-id> --timeline
+sdyj inspect-run <run-id> --timeline
 ```
 
 Show one event:
 
 ```bash
-python main.py inspect-run <run-id> --timeline --event evt_000012
+sdyj inspect-run <run-id> --timeline --event evt_000012
 ```
 
 List recent run bundles:
 
 ```bash
-python main.py runs list
+sdyj runs list
 ```
+
+## Static Trace Viewer
+
+For a browser-based inspection view, open
+`SDYJ_Agents/web/trace_viewer.html` from the repository and drop in either:
+
+- `outputs/runs/<run-id>/trace.json`
+- `outputs/runs/<run-id>/events.jsonl`
+
+The viewer runs fully client-side. It filters by event type, node, status, and
+free-text search, then shows the selected event's full JSON payload for quick
+debugging. A docs entry point is also available at `docs/trace-viewer-demo.html`.
 
 ## Replay
 
@@ -70,15 +82,27 @@ Deterministic replay uses the recorded LLM and tool outputs from Trace v2. It
 does not call real model or search APIs.
 
 ```bash
-python main.py replay <run-id>
+sdyj replay <run-id>
 ```
 
 Replay creates a new run with `mode=replay` and stores its own trace. This makes
 it possible to compare the original and replayed executions:
 
 ```bash
-python main.py diff-runs <original-run-id> <replay-run-id>
+sdyj diff-runs <original-run-id> <replay-run-id>
 ```
+
+Replay also restores v0.6 feature flags from `trace.config` so the recorded
+LLM-call order stays aligned with the original run:
+
+- `enable_reflection`
+- `enable_plan_refinement`
+- `skip_verification`
+- `max_revisions`
+
+For legacy traces that do not contain `enable_plan_refinement`, replay defaults
+plan refinement to off. This avoids introducing an extra Planner LLM call that
+the source trace never recorded.
 
 ## What Replay Is For
 

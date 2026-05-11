@@ -31,6 +31,17 @@ class ResearchState(TypedDict):
     needs_more_research: bool
     user_feedback: Optional[str]
     output_format: str  # "markdown" or "html"
+    # Verifier loop state (added in v0.6). The Verifier agent grades the
+    # generated report and may trigger one or more revise iterations.
+    verification_result: Optional[dict]  # Latest critique from the verifier.
+    verification_history: List[dict]  # All critiques in chronological order.
+    revision_count: int  # How many times the Rapporteur has revised already.
+    max_revisions: int  # Hard cap on revisions to prevent infinite loops.
+    skip_verification: bool  # CLI / config opt-out for the verifier loop.
+    # Plan refinement state (also v0.6). The Planner gets one mid-flight
+    # opportunity to delete redundant remaining sub-tasks, tighten weak
+    # queries, or add a follow-up sub-task that the evidence revealed.
+    plan_refined: bool
 
 
 class PlanStructure(TypedDict):

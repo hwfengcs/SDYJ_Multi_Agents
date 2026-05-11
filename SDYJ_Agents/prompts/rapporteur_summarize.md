@@ -7,11 +7,13 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 # 任务说明
 基于以下研究发现，为研究问题撰写一份结构化的执行摘要（Executive Summary）。
 
-## 研究问题
-"{{ query }}"
+<research_query>
+{{ query }}
+</research_query>
 
-## 研究发现
+<research_findings>
 {{ research_findings }}
+</research_findings>
 
 ---
 
@@ -47,6 +49,14 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 4. **数据驱动**，尽可能引用具体数据、案例或研究成果
 5. **结构清晰**，使用适当的Markdown格式（小标题、加粗、列表等）增强可读性
 6. **深度整合**，对信息进行综合分析和提炼，而非简单罗列
+7. **证据约束**，不要引入研究发现中没有出现的新事实；证据不足时用审慎表述
+
+<internal_reasoning_checklist>
+1. 先识别哪些发现直接回答研究问题。
+2. 将重复或相近证据合并成更高层次的洞察。
+3. 区分已被多源支持的结论与仍需验证的推断。
+4. 如果某个检索源无结果或报错，不要把缺失信息当成事实。
+</internal_reasoning_checklist>
 
 ## 格式要求
 - 使用Markdown格式

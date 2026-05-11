@@ -1,71 +1,224 @@
 # SDYJ Multi Agents
 
+**一个自验证 + 可回放 + 可基准测试的多智能体研究框架。**
+
 [English](README_EN.md) | 中文
 
 [![CI](https://github.com/hwfengcs/SDYJ_Multi_Agents/actions/workflows/ci.yml/badge.svg)](https://github.com/hwfengcs/SDYJ_Multi_Agents/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/sdyj-multi-agents?color=blue)](https://pypi.org/project/sdyj-multi-agents/)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/hwfengcs/SDYJ_Multi_Agents?style=social)](https://github.com/hwfengcs/SDYJ_Multi_Agents)
 
-SDYJ Multi Agents 是一个基于 LangGraph 的多智能体研究框架。它把开放式研究任务拆成“意图识别 -> 计划生成 -> 人工审核 -> 多源检索 -> 综合报告”的可控工作流，并重点提供 Trace v2、deterministic replay、证据追踪和可作为 CI gate 的 benchmark。
+<!-- Hosted demo badges are prepared but hidden until the URLs are verified:
+[![Open in Spaces](https://img.shields.io/badge/Spaces-Try_demo-blue)](https://huggingface.co/spaces/<owner>/sdyj-multi-agents)
+[![Trace Viewer](https://img.shields.io/badge/GitHub_Pages-Trace_Viewer-blue)](https://hwfengcs.github.io/SDYJ_Multi_Agents/trace-viewer-demo.html)
+-->
 
-## 为什么值得关注
+> SDYJ 把开放式研究请求转换成一个可控的 LangGraph 工作流：意图识别 → 计划生成 → 人工审核 → 多源检索 → 证据驱动的报告合成。每次运行都写入 Trace v2 事件时间线、可 deterministic replay、记录每次 LLM 调用的 token 与美元成本，并且通过 benchmark 阈值 gate 把质量回归挡在 CI 之外。目标是 **agent 工程化运营**，不是又一个 LangGraph hello-world demo。
 
-- **多 Agent 工作流**：Coordinator、Planner、Researcher、Rapporteur 分工协作。
-- **Human-in-the-loop**：执行研究前先展示计划，用户可批准或反馈修改。
-- **多模型适配**：支持 DeepSeek、OpenAI、Claude、Gemini，统一 LLM 抽象层。
-- **多源检索**：集成 Tavily、arXiv，并预留 MCP 工具适配接口。
-- **证据驱动报告**：检索结果会规范化为 `E1/E2/...` 证据项，自动去重并保留 URL、domain、query、发布时间和相关性分数。
-- **Trace v2 可观测性**：每次运行都会生成事件时间线，记录节点、LLM 调用、工具调用、routing decision、latency、错误、报告指标和 replay cache。
-- **Deterministic Replay**：可用已记录的 LLM/tool I/O 重放一次历史运行，复现失败路径，不调用真实 API。
-- **实用 Benchmark**：内置困难 Agent 场景，支持阈值 gate、summary compare、trace completeness 和离线确定性检查。
-- **可复现工程**：提供 Python 包配置、CLI 入口、单元测试、CI、示例输出和架构文档。
+## 为什么是 SDYJ
+
+大多数开源 agent 框架只能跑通"happy path"。一旦工具返回为空、LLM 编造了引用、计划跑偏 —— 没办法追查、没办法回放、没办法做回归测试。SDYJ 的设计基础假设是：**agent 的运营本质上是评测问题，不是 prompt 问题**：
+
+- 每个节点、LLM 调用、工具调用、路由决策、报告指标都成为结构化 trace 事件。
+- 每次运行都可以从录制的 I/O 重放 —— 不需要真实 API 调用就能复现失败。
+- 每个版本都用 hard scenario benchmark 阈值卡住 —— 质量回归会让 CI 红，无法上线。
+- 每个检索结果被规范化为去重后的 `E1/E2/...` 证据项，与报告里的论点一一对应。
+
+## 与同类项目对比
+
+| 能力                              | SDYJ Multi Agents | GPT Researcher | AutoGen | LangGraph 官方示例 |
+|-----------------------------------|:-:|:-:|:-:|:-:|
+| LangGraph 状态机                  | ✅ | ❌ | ⚠️ | ✅ |
+| 人在环路计划审核                  | ✅ | ❌ | ⚠️ | ⚠️ |
+| 证据驱动的 `E1/E2/...` ID         | ✅ | ⚠️ | ❌ | ❌ |
+| Trace v2 事件时间线               | ✅ | ❌ | ⚠️ | ❌ |
+| 从 trace 做 deterministic replay  | ✅ | ❌ | ❌ | ❌ |
+| 每次调用的 token + USD cost       | ✅ | ⚠️ | ⚠️ | ❌ |
+| benchmark 阈值 gate (`--fail-under`) | ✅ | ❌ | ❌ | ❌ |
+| 4 个 LLM provider 统一抽象层      | ✅ | ✅ | ✅ | ⚠️ |
+| 自验证修订 loop                   | ✅ v0.6 alpha | ❌ | ❌ | ❌ |
+| 公开 benchmark 跑分（GAIA 等）    | 🚧 v0.6 | ⚠️ | ⚠️ | ❌ |
+
+✅ 一等公民 · ⚠️ 部分支持 / 需自己写 · ❌ 不提供 · 🚧 进行中
+
+## 快速开始（60 秒）
+
+```bash
+conda env create -f environment.yml
+conda activate sdyj
+cp .env.example .env                    # Windows PowerShell: copy .env.example .env
+sdyj research "RAG Agent 如何做可靠性评估？"
+```
+
+在 `.env` 中填入 `DEEPSEEK_API_KEY` 与 `TAVILY_API_KEY` 后即可运行。完整环境说明见 [docs/conda-setup.md](docs/conda-setup.md)。
+
+不带 query 进入交互式菜单：
+
+```bash
+sdyj
+```
+
+容器快速开始：
+
+```bash
+docker build -t sdyj:0.6 .
+docker run --rm sdyj:0.6 sdyj --help
+docker compose up --build
+```
+
+Docker 与 Compose 部署说明见 [docs/docker.md](docs/docker.md)。
 
 ## 架构概览
 
 ```text
-User Query
-    |
-    v
-Coordinator -- classify intent / initialize state
-    |
-    v
-Planner -- build structured research plan
-    |
-    v
-Human Review -- approve or request changes
-    |
-    v
-Researcher -- Tavily / arXiv / MCP retrieval
-    |
-    v
-Rapporteur -- synthesize Markdown or HTML report
+用户查询
+    │
+    ▼
+Coordinator ─ 意图识别 / 状态初始化
+    │
+    ▼
+Planner ─ 生成结构化研究计划 ─────────────┐
+    │                                     │
+    ▼                                     │ 修订
+Human Review ─ 批准或反馈修改 ────────────┘
+    │ 批准
+    ▼
+Researcher ─ Tavily / arXiv / MCP 检索（迭代）
+    │
+    ▼
+Rapporteur ─ Markdown / HTML / JSON 报告
+    │
+    ▼
+Verifier ─ critique + revise loop
+    │
+    ▼
+Trace v2 bundle → outputs/runs/<run-id>/
 ```
 
-更完整的设计说明见 [docs/architecture.md](docs/architecture.md)。
+完整设计见 [docs/architecture.md](docs/architecture.md)。
 
-## 快速开始
+## v0.6 新进展（进行中）
 
-### 1. 安装
+- **每次 LLM 调用的 token 与美元成本跟踪** —— 见 [`SDYJ_Agents/utils/cost.py`](SDYJ_Agents/utils/cost.py)。CLI `inspect-run` 会展示每次调用的成本表，trace.metrics 累计总额。
+- **provider 无关的 usage 捕获**：OpenAI、Claude、DeepSeek、Gemini 都会暴露 `last_usage`，无论 provider 都能算 cost。
+- **Verifier loop** —— 由独立 critic agent 检查报告与证据是否一致，不达标会触发有上限的 Rapporteur 修订。
+- **确定性 citation audit** —— Verifier 前会先检查 `[E1]` 证据 ID 是否真实存在、key finding 是否有有效引用，并把无效引用/无支撑 claim 纳入 benchmark 指标。
+- **Reflexive Researcher** —— 当一批查询返回为空、失败或相关性低时，agent 会重写查询并重试一次。
+- **中途计划修订** —— 完成足够子任务后，Planner 会基于已收集证据调整剩余计划。
+- **并行工具执行** —— 单个 task 内的 `(query, source)` 检索可以按并发上限同时运行。
+- **结构化输出链路** —— Planner、Rapporteur 信息组织、Researcher 反思、Verifier 优先使用 provider 原生 JSON mode。
+- **Streamlit Web UI MVP** —— 本地运行：`streamlit run streamlit_app.py` 或 `streamlit run SDYJ_Agents/web/app.py`。
+- **PyPI 发布流程** 用 Trusted Publishers —— 见 [docs/release-process.md](docs/release-process.md)。
+- **公开 benchmark 跑分** —— GAIA Level 1 子集与 AssistantBench，包括 v0.5-vs-v0.6 ablation。*即将到来。*
+- **Hugging Face Spaces 在线 Demo 部署**。*即将到来。*
+- **真正的 MCP 集成** —— 支持官方 `mcp` Python SDK 的 stdio / streamable HTTP transport，同时保留旧 HTTP shim 作为 fallback。
+
+完整 v0.6 计划见 [`docs/release-notes/v0.6.md`](docs/release-notes/v0.6.md) 与 [ROADMAP.md](ROADMAP.md)。
+
+## v0.6 发布准备快照（2026-05-11）
+
+本地可验证的发布准备已经基本收口：
+
+- 最新真实 provider、benchmark、Docker 与 hosted demo 状态以
+  [docs/live-run-notes.md](docs/live-run-notes.md) 为准；这里仅是
+  release-readiness 快照。
+- `python -m pytest`：`145 passed, 1 xfailed`。
+- `python -m ruff check SDYJ_Agents tests examples`：通过。
+- `python -m build` 与 `python -m twine check dist/*`：通过。
+- 新增 `sdyj release-check` / `python scripts/release_readiness.py`，可一键汇总 doctor、pytest、ruff、build、twine、benchmark 与 MCP 本地预检；外部缺口只报告为 blocker，不打印 secret，也不发布任何资产。
+- GitHub Pages、Hugging Face Spaces、TestPyPI/PyPI、Docker/GHCR 都已有本地文档、workflow 或静态 gate；真实 URL / 包 / 镜像发布仍等待平台侧操作。
+- 公开 benchmark harness 已提交 synthetic GAIA-style smoke 的 `summary` / `manifest` / `predictions` / `graded` / failure-analysis artifacts，见 [docs/benchmark-results-public.md](docs/benchmark-results-public.md)。这不是 GAIA 公共分数，只证明 runner、grader、failure analysis 与 artifact layout 可复现。
+- Benchmark comparison 已增强为 per-metric regression analysis，可记录缺失/新增场景、feature flag 变化、root-cause rollup 与 top regressions/improvements。
+- MCP filesystem demo 的 no-secret `--check` 已通过；GitHub MCP `--check` 在无 `GITHUB_PERSONAL_ACCESS_TOKEN` 时会安全失败且只输出布尔状态。
+
+仍需外部条件后才能完成的事项：
+
+- 配置真实 `TAVILY_API_KEY` 后重跑 DeepSeek + Tavily + arXiv live smoke，并执行 `inspect-run` / `replay` / `diff-runs`。
+- 在 Docker-enabled host 上跑 build/run/compose smoke。
+- 启用 GitHub Pages、创建 Hugging Face Space、配置 Trusted Publishers，再把 README 顶部隐藏 badge 切换为真实链接。
+- 获取 Hugging Face GAIA 数据集访问与真实 predictions 后，才能 claim GAIA Level 1 小切片结果。
+
+## Trace、回放、检查
+
+每次运行会写入 `outputs/runs/<run-id>/` 下的 bundle，并保留兼容路径 `outputs/traces/<run-id>.json`：
 
 ```bash
-git clone https://github.com/hwfengcs/SDYJ_Multi_Agents.git
-cd SDYJ_Multi_Agents
-python -m pip install -e ".[dev]"
+sdyj inspect-run                       # 最新一次运行的摘要 + 工具调用 + LLM 成本表
+sdyj inspect-run <run-id> --timeline   # 完整事件时间线
+sdyj runs list
+sdyj replay <run-id>                   # 用录制的 LLM/tool I/O 重放，不调用真实 API
+sdyj diff-runs <run-a> <run-b>
+sdyj doctor                            # 本地/部署环境预检，不调用真实 API
 ```
 
-也可以使用传统方式：
+也可以在浏览器打开 `SDYJ_Agents/web/trace_viewer.html`，拖入
+`trace.json` 或 `events.jsonl` 做客户端过滤和事件详情检查。
+
+详见 [docs/trace-replay.md](docs/trace-replay.md)。
+
+## Benchmark
+
+离线 benchmark 使用确定性 hard scenarios + canned evidence，不需要真实 API key，能直接接入 CI：
 
 ```bash
-python -m pip install -r requirements.txt
+sdyj list-scenarios
+sdyj benchmark run --max-scenarios 1 --max-iterations 2
+sdyj benchmark run --fail-under 0.75            # CI 回归 gate
+sdyj benchmark run --determinism-repeats 2      # 离线 determinism 检查
+sdyj benchmark run --compare-summary outputs/eval_reports/eval_summary_YYYYMMDD_HHMMSS.json
 ```
 
-### 2. 配置环境变量
+`--compare-summary` 与 `sdyj benchmark compare` 会检查关键 per-metric
+回退、缺失场景、feature flag 变化，并输出 root-cause rollup，避免 aggregate
+score 持平时漏掉 citation、tool 或 trace 维度的退化。
+
+真实 DeepSeek 评测把模型推理与确定性检索分开：
+
+```bash
+sdyj benchmark run \
+  --live \
+  --provider deepseek \
+  --model deepseek-v4-flash \
+  --scenario agent_reliability_hard \
+  --max-iterations 2
+```
+
+加 `--live-search` 同时启用真实检索。详见 [docs/benchmark.md](docs/benchmark.md)。
+
+公开 benchmark harness 已有可复现入口：
+
+```bash
+sdyj benchmark external --suite gaia --source local --limit 3 --output-dir outputs/public_benchmarks
+```
+
+本地 `local` 数据是 synthetic GAIA-style smoke fixture，只证明 runner / grader / artifact layout。真实 GAIA Level 1 需使用 `--source hf` 并完成 Hugging Face 登录与数据集访问确认，结果记录见 [docs/benchmark-results-public.md](docs/benchmark-results-public.md)。
+
+## 项目结构
+
+```text
+SDYJ_Agents/
+  agents/       # Coordinator / Planner / Researcher / Rapporteur / Verifier
+  cli/          # argparse CLI 与交互菜单
+  llm/          # provider 无关的 LLM 抽象层（OpenAI / Claude / Gemini / DeepSeek）
+  prompts/      # Jinja 提示词模板
+  tools/        # Tavily、arXiv、MCP 适配器
+  workflow/     # LangGraph 图 / 状态 / 节点
+  utils/        # config、logging、evidence、tracing、cost
+  evaluation/   # benchmark 场景、指标、runner
+docs/           # 架构、trace/replay、benchmark、发布流程
+examples/       # 可复现的小示例
+tests/          # 用 fake LLM/search 的单元测试
+```
+
+## 配置
 
 ```bash
 copy .env.example .env
 ```
 
-在 `.env` 中填入至少一个 LLM API Key。推荐先用 DeepSeek：
+至少配置一个 LLM API key。推荐 DeepSeek（最便宜）：
 
 ```bash
 LLM_PROVIDER=deepseek
@@ -74,155 +227,48 @@ DEEPSEEK_API_KEY=sk-...
 TAVILY_API_KEY=tvly-...
 ```
 
-Claude 和 Gemini 使用官方变量名：
+其他 provider 使用各自官方变量名 —— `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GOOGLE_API_KEY`。旧的 `CLAUDE_API_KEY` 和 `GEMINI_API_KEY` 仍兼容。
 
-```bash
-ANTHROPIC_API_KEY=sk-ant-...
-GOOGLE_API_KEY=AIza...
-```
-
-项目仍兼容旧变量名 `CLAUDE_API_KEY` 和 `GEMINI_API_KEY`。
-
-### 3. 运行
-
-```bash
-python main.py config-info
-python main.py list-models deepseek
-python main.py research "总结一下 AI Agent 评测方法的最新趋势"
-```
-
-安装为包后也可以使用：
-
-```bash
-sdyj research "对比 LangGraph、AutoGen 和 CrewAI 的设计取舍"
-```
-
-常用参数：
-
-```bash
-python main.py research \
-  --provider deepseek \
-  --model deepseek-v4-flash \
-  --max-iterations 3 \
-  --output-format markdown \
-  --auto-approve \
-  "RAG Agent 如何做可靠性评估？"
-```
-
-不带 query 会进入交互式菜单：
-
-```bash
-python main.py
-```
-
-### 4. Trace / Replay
-
-每次研究和评测都会写入 run bundle：
-
-```text
-outputs/runs/<run-id>/
-  trace.json
-  events.jsonl
-  state.final.json
-  report.md|html|json
-```
-
-同时保留兼容路径 `outputs/traces/<run-id>.json`。
-
-```bash
-python main.py inspect-run
-python main.py inspect-run <run-id> --timeline
-python main.py runs list
-python main.py replay <run-id>
-python main.py diff-runs <run-a> <run-b>
-```
-
-详见 [docs/trace-replay.md](docs/trace-replay.md)。
-
-### 5. Benchmark
-
-离线 benchmark 不需要真实 API key，使用固定困难场景和 canned evidence，适合 CI 和回归测试：
-
-```bash
-python main.py list-scenarios
-python main.py benchmark run --max-scenarios 1 --max-iterations 2
-python main.py benchmark run --fail-under 0.75
-python main.py benchmark run --determinism-repeats 2
-```
-
-真实 DeepSeek 评测会调用 `.env` 中的 `DEEPSEEK_API_KEY`，默认仍使用 canned evidence，方便把变量集中在模型推理质量上：
-
-```bash
-python main.py benchmark run \
-  --live \
-  --provider deepseek \
-  --model deepseek-v4-flash \
-  --scenario agent_reliability_hard \
-  --max-iterations 2
-```
-
-如果需要同时评估真实搜索链路，可以加 `--live-search`。
-
-旧命令 `python main.py eval ...` 仍然可用。详见 [docs/benchmark.md](docs/benchmark.md)。
-
-## 项目结构
-
-```text
-SDYJ_Agents/
-  agents/       # Coordinator / Planner / Researcher / Rapporteur
-  cli/          # argparse CLI and interactive menu
-  llm/          # provider-agnostic LLM wrappers
-  prompts/      # Jinja prompt templates
-  tools/        # Tavily, arXiv, MCP adapters
-  workflow/     # LangGraph graph and state
-  utils/        # config, logging, evidence, tracing
-  evaluation/   # benchmark scenarios, metrics, runner
-docs/           # architecture, trace/replay, benchmark, roadmap
-examples/       # small reproducible examples
-tests/          # unit tests with fake LLM/search
-```
+MCP 是可选配置。stdio、streamable HTTP 与旧 HTTP fallback 的配置方式见
+[docs/mcp.md](docs/mcp.md)。
 
 ## 输出格式
 
-- Markdown：适合版本管理、二次编辑、论文/报告草稿。
-- HTML：适合直接分享和演示。
-- JSON：适合下游自动化、回归评测和系统集成。
+- Markdown：适合版本管理、二次编辑、报告草稿。
+- HTML：适合直接分享与演示。
+- JSON：适合下游自动化、回归评测、系统集成。
 
-生成文件默认写入 `outputs/`，该目录已被 git 忽略：
+样例：[examples/sample_report.md](examples/sample_report.md) · [examples/sample_trace.json](examples/sample_trace.json) · [examples/eval_summary.json](examples/eval_summary.json)。
 
-- `outputs/research_report_*.md|html|json`：研究报告。
-- `outputs/runs/<run-id>/`：Trace v2 run bundle。
-- `outputs/traces/*.json`：兼容旧路径的运行轨迹。
-- `outputs/eval_reports/`：评测报告和汇总。
-
-仓库展示样例见 [examples/sample_report.md](examples/sample_report.md)、[examples/sample_trace.json](examples/sample_trace.json) 和 [examples/eval_summary.json](examples/eval_summary.json)。
-
-## 测试
+## 开发
 
 ```bash
+conda env update -n sdyj -f environment.yml --prune
+conda activate sdyj
 pytest
 ruff check SDYJ_Agents tests
 ```
 
-测试默认使用 fake LLM 和 fake search，不需要真实 API key。
+Conda 是本项目默认开发环境。单元测试使用 fake LLM 与 fake search，不需要真实 API key。
 
 ## Roadmap
 
-v0.5 已完成：
-
-- Trace v2 事件流和 run bundle。✅
-- Deterministic replay。✅
-- Benchmark gate、阈值、summary compare 和 trace completeness。✅
-- JSON 输出格式。✅
-
-下一步重点是 partial replay、外部 benchmark suite、工具注册机制、OpenTelemetry export 和 Web UI。
+| 里程碑 | 状态 |
+|-------|------|
+| v0.1 — 工程基线（CI、tests、license、docs） | ✅ |
+| v0.2 — 证据驱动报告 + 去重 source ID | ✅ |
+| v0.3 — Agent 可观测性（Trace v2、latency、错误率） | ✅ |
+| v0.4 — 评测套件（hard scenarios + 报告质量指标） | ✅ |
+| v0.5 — Trace v2、deterministic replay、benchmark gate、JSON 输出 | ✅ |
+| **v0.6 — self-verifying loop、cost tracking、公开 benchmark、Web UI、MCP** | 🚧 |
+| v0.7 — partial replay、OpenTelemetry 导出、插件式检索注册 | ⏳ |
 
 完整路线图见 [ROADMAP.md](ROADMAP.md)。
 
 ## 贡献
 
-欢迎提交 Issue 和 PR。开发流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+欢迎提交 Issue 和 PR，开发流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT，见 [LICENSE](LICENSE)。

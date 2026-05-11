@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterator
@@ -11,6 +12,7 @@ from .agents.coordinator import Coordinator
 from .agents.planner import Planner
 from .agents.rapporteur import Rapporteur
 from .agents.researcher import Researcher
+from .agents.verifier import Verifier
 from .evaluation.metrics import evaluate_state
 from .evaluation.scenarios import get_scenario
 from .llm.base import BaseLLM
@@ -54,23 +56,26 @@ class ReplaySearchTool:
     recorded_calls: list[Dict[str, Any]]
 
     def __post_init__(self) -> None:
-        self.index = 0
+        self._consumed: set[int] = set()
+        self._lock = threading.Lock()
 
-    def search(self, query: str, **kwargs) -> Dict[str, Any]:
-        while self.index < len(self.recorded_calls):
-            call = self.recorded_calls[self.index]
-            self.index += 1
-            if str(call.get("source", "")).lower() != self.source.lower():
-                continue
-            result = copy.deepcopy(call.get("result") or {})
-            if not result:
-                result = {
-                    "query": query,
-                    "source": self.source,
-                    "results": [],
-                    "error": "recorded tool result missing",
-                }
-            return result
+    def search(self, query: str, **kwargs) -> Dict[str, Any] | None:
+        with self._lock:
+            call = self._take_recorded_call(query, require_query=True)
+            if call is None:
+                call = self._take_recorded_call(query, require_query=False)
+            if call is not None:
+                if "result" in call and call.get("result") is None:
+                    return None
+                result = copy.deepcopy(call.get("result") or {})
+                if not result:
+                    result = {
+                        "query": query,
+                        "source": self.source,
+                        "results": [],
+                        "error": "recorded tool result missing",
+                    }
+                return result
         return {
             "query": query,
             "source": self.source,
@@ -78,15 +83,71 @@ class ReplaySearchTool:
             "error": f"ReplaySearchTool exhausted recorded calls for {self.source}",
         }
 
+    def _take_recorded_call(self, query: str, require_query: bool) -> Dict[str, Any] | None:
+        query_key = str(query).strip().lower()
+        for index, call in enumerate(self.recorded_calls):
+            if index in self._consumed:
+                continue
+            if str(call.get("source", "")).lower() != self.source.lower():
+                continue
+            if require_query and str(call.get("query", "")).strip().lower() != query_key:
+                continue
+            self._consumed.add(index)
+            return call
+        return None
+
 
 def can_deterministically_replay(trace: Dict[str, Any]) -> tuple[bool, str]:
     """Return whether a trace has enough recorded I/O for deterministic replay."""
     cache = trace.get("replay_cache") or {}
     if not cache.get("llm_calls"):
         return False, "trace does not contain recorded LLM responses"
-    if trace.get("tool_calls") and not cache.get("tool_calls"):
-        return False, "trace does not contain recorded tool results"
+    for call in trace.get("tool_calls") or []:
+        if call.get("error"):
+            continue
+        if not _has_cached_tool_result(call, cache.get("tool_calls") or []):
+            return False, "trace does not contain recorded successful tool results"
     return True, "ok"
+
+
+def _has_cached_tool_result(call: Dict[str, Any], cached_calls: list[Dict[str, Any]]) -> bool:
+    call_id = call.get("tool_call_id")
+    source = str(call.get("source", "")).lower()
+    query = str(call.get("query", "")).strip().lower()
+    task_id = call.get("task_id")
+    for cached in cached_calls:
+        if call_id and cached.get("tool_call_id") == call_id:
+            return True
+        if (
+            str(cached.get("source", "")).lower() == source
+            and str(cached.get("query", "")).strip().lower() == query
+            and cached.get("task_id") == task_id
+        ):
+            return True
+    return False
+
+
+def _recorded_tool_calls_for_replay(source_trace: Dict[str, Any]) -> list[Dict[str, Any]]:
+    cache = source_trace.get("replay_cache") or {}
+    recorded = copy.deepcopy(cache.get("tool_calls") or [])
+    recorded_ids = {call.get("tool_call_id") for call in recorded if call.get("tool_call_id")}
+
+    for call in source_trace.get("tool_calls") or []:
+        if call.get("tool_call_id") in recorded_ids or not call.get("error"):
+            continue
+        recorded.append(
+            {
+                "tool_call_id": call.get("tool_call_id"),
+                "source": call.get("source"),
+                "query": call.get("query"),
+                "task_id": call.get("task_id"),
+                # Missing-source calls were recorded without a raw result in
+                # the original run, so replay should also return None and let
+                # Researcher record the same unavailable-source outcome.
+                "result": None,
+            }
+        )
+    return recorded
 
 
 def run_deterministic_replay(
@@ -118,15 +179,48 @@ def run_deterministic_replay(
         ReplayLLM(cache.get("llm_calls", []), model=source_trace.get("model") or "replay-llm"),
         replay_trace,
     )
+    # Match the source run's reflection / verification behavior so the
+    # recorded LLM-call order lines up with the workflow path. Mismatching
+    # would leave reflection or verifier prompts trying to consume calls
+    # the source never made.
+    source_config = source_trace.get("config") or {}
+    enable_reflection_replay = bool(source_config.get("enable_reflection", False))
+    enable_plan_refinement_replay = bool(source_config.get("enable_plan_refinement", False))
+    enable_parallel_tool_execution_replay = bool(
+        source_config.get("enable_parallel_tool_execution", False)
+    )
+    skip_verification = bool(source_config.get("skip_verification", True))
+    max_revisions = int(source_config.get("max_revisions") or 0)
+    replay_trace.setdefault("config", {}).update(
+        {
+            "enable_reflection": enable_reflection_replay,
+            "enable_plan_refinement": enable_plan_refinement_replay,
+            "enable_parallel_tool_execution": enable_parallel_tool_execution_replay,
+            "skip_verification": skip_verification,
+            "max_revisions": max_revisions,
+        }
+    )
+
     coordinator = Coordinator(llm)
-    planner = Planner(llm)
-    researcher = Researcher(llm)
-    tool_calls = cache.get("tool_calls", [])
+    planner = Planner(llm, enable_plan_refinement=enable_plan_refinement_replay)
+    researcher = Researcher(
+        llm,
+        enable_reflection=enable_reflection_replay,
+        enable_parallel_tool_execution=enable_parallel_tool_execution_replay,
+    )
+    tool_calls = _recorded_tool_calls_for_replay(source_trace)
     researcher.tavily = ReplaySearchTool("tavily", tool_calls)
     researcher.arxiv = ReplaySearchTool("arxiv", tool_calls)
     researcher.mcp = ReplaySearchTool("mcp", tool_calls)
     rapporteur = Rapporteur(llm)
-    workflow = ResearchWorkflow(coordinator, planner, researcher, rapporteur)
+    # Replay should reuse whatever verification config the source run used.
+    # That keeps the recorded LLM call order intact: the verifier may have
+    # made one or more LLM calls during the original run, and the
+    # ReplayLLM hands those back in order. Forcing skip=True on a trace
+    # that *did* run the verifier would leave the verifier's recorded calls
+    # consumed by other nodes and break replay.
+    verifier = None if skip_verification else Verifier(llm)
+    workflow = ResearchWorkflow(coordinator, planner, researcher, rapporteur, verifier)
 
     final_state: Dict[str, Any] = {}
     for update in workflow.stream_interactive(
@@ -135,6 +229,8 @@ def run_deterministic_replay(
         auto_approve=True,
         output_format=(source_trace.get("report") or {}).get("format", "markdown"),
         trace=replay_trace,
+        skip_verification=skip_verification,
+        max_revisions=max_revisions,
     ):
         for value in update.values():
             if isinstance(value, dict):

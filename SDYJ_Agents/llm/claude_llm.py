@@ -2,9 +2,9 @@
 Claude LLM Implementation
 """
 
-from typing import Iterator
+from typing import Any, Dict, Iterator, Mapping
 from anthropic import Anthropic
-from .base import BaseLLM
+from .base import BaseLLM, parse_json_object
 
 
 class ClaudeLLM(BaseLLM):
@@ -24,6 +24,7 @@ class ClaudeLLM(BaseLLM):
             **kwargs: Additional configuration
         """
         super().__init__(api_key, model, **kwargs)
+        self.last_usage = None
         self.client = Anthropic(api_key=api_key)
 
     def generate(self, prompt: str, **kwargs) -> str:
@@ -49,7 +50,61 @@ class ClaudeLLM(BaseLLM):
             messages=[{"role": "user", "content": prompt}],
             **params
         )
+        # Anthropic returns input_tokens / output_tokens; SDYJ_Agents.utils.cost
+        # normalizes both naming conventions, so we expose the raw dict.
+        if response.usage:
+            self.last_usage = {
+                "input_tokens": response.usage.input_tokens,
+                "output_tokens": response.usage.output_tokens,
+            }
+        else:
+            self.last_usage = None
         return response.content[0].text
+
+    def generate_json(
+        self,
+        prompt: str,
+        schema: Mapping[str, Any] | None = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Generate a JSON object using Claude tool use when possible."""
+        params = {**self.config, **kwargs}
+        if 'max_tokens' not in params:
+            params['max_tokens'] = 4096
+
+        input_schema = dict(schema or {"type": "object", "additionalProperties": True})
+        response = self.client.messages.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            tools=[
+                {
+                    "name": "emit_json",
+                    "description": "Return the requested structured JSON object.",
+                    "input_schema": input_schema,
+                }
+            ],
+            tool_choice={"type": "tool", "name": "emit_json"},
+            **params,
+        )
+        if response.usage:
+            self.last_usage = {
+                "input_tokens": response.usage.input_tokens,
+                "output_tokens": response.usage.output_tokens,
+            }
+        else:
+            self.last_usage = None
+
+        for block in response.content:
+            if getattr(block, "type", None) == "tool_use":
+                tool_input = getattr(block, "input", None)
+                if isinstance(tool_input, dict):
+                    return tool_input
+        text = "".join(
+            getattr(block, "text", "")
+            for block in response.content
+            if getattr(block, "type", None) == "text"
+        )
+        return parse_json_object(text or "{}")
 
     def stream_generate(self, prompt: str, **kwargs) -> Iterator[str]:
         """

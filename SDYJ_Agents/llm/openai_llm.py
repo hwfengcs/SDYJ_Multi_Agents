@@ -2,9 +2,9 @@
 OpenAI LLM Implementation
 """
 
-from typing import Iterator
+from typing import Any, Dict, Iterator, Mapping
 from openai import OpenAI
-from .base import BaseLLM
+from .base import BaseLLM, parse_json_object
 
 
 class OpenAILLM(BaseLLM):
@@ -24,6 +24,7 @@ class OpenAILLM(BaseLLM):
             **kwargs: Additional configuration
         """
         super().__init__(api_key, model, **kwargs)
+        self.last_usage = None
         self.client = OpenAI(api_key=api_key)
 
     def generate(self, prompt: str, **kwargs) -> str:
@@ -45,7 +46,26 @@ class OpenAILLM(BaseLLM):
             messages=[{"role": "user", "content": prompt}],
             **params
         )
+        self.last_usage = response.usage.model_dump() if response.usage else None
         return response.choices[0].message.content
+
+    def generate_json(
+        self,
+        prompt: str,
+        schema: Mapping[str, Any] | None = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Generate a JSON object using OpenAI JSON mode."""
+        params = {**self.config, **kwargs}
+        params.setdefault("response_format", {"type": "json_object"})
+
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            **params,
+        )
+        self.last_usage = response.usage.model_dump() if response.usage else None
+        return parse_json_object(response.choices[0].message.content or "{}")
 
     def stream_generate(self, prompt: str, **kwargs) -> Iterator[str]:
         """

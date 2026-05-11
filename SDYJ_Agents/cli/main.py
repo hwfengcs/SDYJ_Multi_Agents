@@ -8,8 +8,10 @@ Refactored to follow the example.py structure with argparse and config persisten
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
+import platform
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,9 +24,17 @@ from rich.panel import Panel
 from rich.markdown import Markdown
 from rich.table import Table
 
-from ..evaluation import run_evaluation
+from .. import __version__
+from ..benchmarks import run_external_benchmark
+from ..evaluation import compare_evaluation_summaries, run_evaluation
 from ..evaluation.scenarios import list_scenarios
-from ..utils.config import load_config_from_env
+from ..release_check import create_release_check_parser, run_release_readiness_from_args
+from ..utils.config import (
+    load_config_from_env,
+    _parse_env_args,
+    _parse_env_json_any_object,
+    _parse_env_json_object,
+)
 from ..utils.logger import setup_logger
 from ..utils.tracing import (
     InstrumentedLLM,
@@ -38,11 +48,28 @@ from ..utils.tracing import (
 )
 from ..replay import can_deterministically_replay, run_deterministic_replay
 from ..llm.factory import LLMFactory
+from ..tools.mcp_client import MCPClient
 from ..agents.coordinator import Coordinator
 from ..agents.planner import Planner
 from ..agents.researcher import Researcher
 from ..agents.rapporteur import Rapporteur
+from ..agents.verifier import DEFAULT_MAX_REVISIONS, Verifier
 from ..workflow.graph import ResearchWorkflow
+
+def _configure_stream_for_safe_console(stream: Any) -> None:
+    """Prefer replacement over crashing when a Windows code page cannot encode output."""
+    reconfigure = getattr(stream, "reconfigure", None)
+    if not callable(reconfigure):
+        return
+    try:
+        reconfigure(errors="replace")
+    except (TypeError, ValueError):
+        # Some redirected/captured streams do not allow reconfiguration.
+        return
+
+
+_configure_stream_for_safe_console(sys.stdout)
+_configure_stream_for_safe_console(sys.stderr)
 
 console = Console()
 error_console = Console(stderr=True)
@@ -58,6 +85,21 @@ class CLIConfig:
     output_dir: str = "./outputs"
     show_steps: bool = False
     output_format: str = "markdown"  # "markdown", "html", or "json"
+    skip_verification: bool = False
+    max_revisions: int = DEFAULT_MAX_REVISIONS
+    skip_reflection: bool = False
+    skip_plan_refinement: bool = False
+    skip_parallel_tool_execution: bool = False
+
+
+@dataclass
+class DoctorCheck:
+    """One environment/deployment preflight check."""
+
+    name: str
+    status: str
+    required: bool
+    detail: str
 
 
 # 配置文件路径
@@ -122,6 +164,142 @@ def get_api_key_for_provider(provider: str) -> str | None:
         if api_key:
             return api_key
     return None
+
+
+def _is_importable(module_name: str) -> bool:
+    return importlib.util.find_spec(module_name) is not None
+
+
+def collect_doctor_checks(provider: str | None = None) -> list[DoctorCheck]:
+    """Collect no-network environment checks for local/live deployment."""
+    load_dotenv()
+    selected_provider = (provider or os.getenv("LLM_PROVIDER", "deepseek")).lower()
+    checks: list[DoctorCheck] = []
+
+    python_ok = sys.version_info >= (3, 10)
+    checks.append(
+        DoctorCheck(
+            "Python",
+            "OK" if python_ok else "FAIL",
+            True,
+            f"{platform.python_version()} ({sys.executable})",
+        )
+    )
+
+    key = get_api_key_for_provider(selected_provider)
+    env_names = ", ".join(PROVIDER_API_KEY_ENVS.get(selected_provider, ()))
+    checks.append(
+        DoctorCheck(
+            "LLM API key",
+            "OK" if key else "FAIL",
+            True,
+            f"{selected_provider}: {env_names or 'unknown provider'}",
+        )
+    )
+
+    tavily_key = os.getenv("TAVILY_API_KEY")
+    checks.append(
+        DoctorCheck(
+            "Tavily search",
+            "OK" if tavily_key else "WARN",
+            False,
+            "TAVILY_API_KEY set" if tavily_key else "missing TAVILY_API_KEY; web search will be skipped",
+        )
+    )
+
+    optional_modules = {
+        "streamlit": "Web UI",
+        "mcp": "MCP SDK",
+        "datasets": "External benchmarks",
+    }
+    for module_name, label in optional_modules.items():
+        checks.append(
+            DoctorCheck(
+                label,
+                "OK" if _is_importable(module_name) else "WARN",
+                False,
+                f"module {module_name} {'available' if _is_importable(module_name) else 'not installed'}",
+            )
+        )
+
+    mcp_config_present = any(
+        os.getenv(name)
+        for name in (
+            "MCP_SERVER_URL",
+            "MCP_CONFIG_PATH",
+            "MCP_COMMAND",
+            "MCP_TRANSPORT",
+        )
+    )
+    if mcp_config_present:
+        try:
+            client = MCPClient(
+                server_url=os.getenv("MCP_SERVER_URL"),
+                api_key=os.getenv("MCP_API_KEY"),
+                transport=os.getenv("MCP_TRANSPORT"),
+                default_tool_name=os.getenv("MCP_TOOL_NAME", "web_search"),
+                config_path=os.getenv("MCP_CONFIG_PATH"),
+                server_name=os.getenv("MCP_SERVER_NAME"),
+                command=os.getenv("MCP_COMMAND"),
+                args=_parse_env_args(os.getenv("MCP_ARGS")),
+                env=_parse_env_json_object(os.getenv("MCP_ENV_JSON")),
+                query_argument=os.getenv("MCP_QUERY_ARG", "query"),
+                tool_arguments=_parse_env_json_any_object(os.getenv("MCP_TOOL_ARGS_JSON")),
+            )
+            checks.append(
+                DoctorCheck(
+                    "MCP config",
+                    "OK",
+                    False,
+                    f"transport={client.transport}, tool={client.default_tool_name}",
+                )
+            )
+        except Exception as exc:
+            checks.append(
+                DoctorCheck(
+                    "MCP config",
+                    "FAIL",
+                    False,
+                    str(exc),
+                )
+            )
+    else:
+        checks.append(
+            DoctorCheck(
+                "MCP config",
+                "WARN",
+                False,
+                "not configured; MCP source will be unavailable",
+            )
+        )
+
+    return checks
+
+
+def run_doctor(provider: str | None = None, strict: bool = False) -> int:
+    """Print environment preflight checks and return an exit code."""
+    checks = collect_doctor_checks(provider=provider)
+    table = Table(title="SDYJ Doctor")
+    table.add_column("Check")
+    table.add_column("Status")
+    table.add_column("Required")
+    table.add_column("Detail")
+    for check in checks:
+        style = "green" if check.status == "OK" else "red" if check.status == "FAIL" else "yellow"
+        table.add_row(
+            check.name,
+            f"[{style}]{check.status}[/{style}]",
+            "yes" if check.required else "no",
+            check.detail,
+        )
+    console.print(table)
+
+    has_required_failure = any(check.required and check.status == "FAIL" for check in checks)
+    has_warning_or_failure = any(check.status != "OK" for check in checks)
+    if has_required_failure or (strict and has_warning_or_failure):
+        return 1
+    return 0
+
 
 
 def print_separator(char: str = "─", length: int = 70) -> None:
@@ -389,6 +567,20 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
             model=config.model,
             mode="research",
         )
+        # Persist v0.6 toggles into trace.config so deterministic replay
+        # reproduces the same workflow path (researcher reflection,
+        # verifier loop, max_revisions). Without this, a replay would
+        # default to skipping reflection and the recorded LLM call order
+        # could mismatch.
+        trace.setdefault("config", {}).update(
+            {
+                "enable_reflection": not config.skip_reflection,
+                "skip_verification": config.skip_verification,
+                "max_revisions": config.max_revisions,
+                "enable_plan_refinement": not config.skip_plan_refinement,
+                "enable_parallel_tool_execution": not config.skip_parallel_tool_execution,
+            }
+        )
 
         # Create LLM
         console.print(f"[dim]正在初始化 {config.provider.upper()} LLM...[/dim]")
@@ -402,18 +594,30 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
         # Create agents
         console.print("[dim]正在初始化智能体...[/dim]")
         coordinator = Coordinator(llm)
-        planner = Planner(llm)
+        planner = Planner(llm, enable_plan_refinement=not config.skip_plan_refinement)
         researcher = Researcher(
             llm=llm,
             tavily_api_key=env_cfg.search.tavily_api_key,
             mcp_server_url=env_cfg.search.mcp_server_url,
-            mcp_api_key=env_cfg.search.mcp_api_key
+            mcp_api_key=env_cfg.search.mcp_api_key,
+            mcp_transport=env_cfg.search.mcp_transport,
+            mcp_tool_name=env_cfg.search.mcp_tool_name,
+            mcp_config_path=env_cfg.search.mcp_config_path,
+            mcp_server_name=env_cfg.search.mcp_server_name,
+            mcp_command=env_cfg.search.mcp_command,
+            mcp_args=env_cfg.search.mcp_args,
+            mcp_env=env_cfg.search.mcp_env,
+            mcp_query_arg=env_cfg.search.mcp_query_arg,
+            mcp_tool_args=env_cfg.search.mcp_tool_args,
+            enable_reflection=not config.skip_reflection,
+            enable_parallel_tool_execution=not config.skip_parallel_tool_execution,
         )
         rapporteur = Rapporteur(llm)
+        verifier = None if config.skip_verification else Verifier(llm)
 
         # Create workflow
         console.print("[dim]正在设置研究工作流...[/dim]\n")
-        workflow = ResearchWorkflow(coordinator, planner, researcher, rapporteur)
+        workflow = ResearchWorkflow(coordinator, planner, researcher, rapporteur, verifier)
 
         # Run workflow
         print_separator("-")
@@ -428,7 +632,9 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
             auto_approve=config.auto_approve,
             human_approval_callback=human_approval_callback if not config.auto_approve else None,
             output_format=config.output_format,
-            trace=trace
+            trace=trace,
+            skip_verification=config.skip_verification,
+            max_revisions=config.max_revisions,
         )
 
         for state_update in stream_iter:
@@ -494,15 +700,8 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
         if current_state and current_state.get('final_report'):
             report = current_state['final_report']
 
-            # Display report
-            console.print("\n")
-            console.print(Panel(
-                Markdown(report),
-                title="研究报告",
-                border_style="green"
-            ))
-
-            # Save report
+            # Save durable artifacts before rendering the report to stdout; terminal
+            # encoding issues should not prevent trace/replay files from being written.
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             output_dir = Path(config.output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -528,6 +727,14 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
             )
             if trace_path:
                 console.print(f"[green][OK] 运行轨迹已保存至：{trace_path}[/green]")
+
+            # Display report
+            console.print("\n")
+            console.print(Panel(
+                Markdown(report),
+                title="研究报告",
+                border_style="green"
+            ))
 
         elif current_state and current_state.get('simple_response'):
             # Simple query was handled, no need to show error
@@ -686,6 +893,40 @@ def inspect_run(
         if trace.get("tool_calls"):
             console.print(tools)
 
+        if trace.get("llm_calls"):
+            llm_table = Table(title="LLM Calls (per call cost estimates)")
+            llm_table.add_column("Call")
+            llm_table.add_column("Model")
+            llm_table.add_column("Prompt tok", justify="right")
+            llm_table.add_column("Completion tok", justify="right")
+            llm_table.add_column("Latency ms", justify="right")
+            llm_table.add_column("Cost USD", justify="right")
+            llm_table.add_column("Error")
+            unknown_priced = False
+            for call in trace.get("llm_calls", []):
+                cost = call.get("cost_usd")
+                if cost is None:
+                    cost_cell = "—"
+                    unknown_priced = True
+                else:
+                    cost_cell = f"${cost:.6f}"
+                llm_table.add_row(
+                    str(call.get("call_id") or ""),
+                    str(call.get("model") or ""),
+                    str(call.get("prompt_tokens_actual") or 0),
+                    str(call.get("completion_tokens_actual") or 0),
+                    str(call.get("latency_ms") or 0),
+                    cost_cell,
+                    str(call.get("error") or ""),
+                )
+            console.print(llm_table)
+            if unknown_priced:
+                console.print(
+                    "[yellow]Tip:[/yellow] '—' means SDYJ_Agents/utils/cost.py "
+                    "has no entry for that (provider, model). Add the price to "
+                    "PRICING_TABLE for accurate totals."
+                )
+
         if timeline:
             events = iter_timeline_events(trace)
             if event_id:
@@ -789,37 +1030,28 @@ def compare_benchmark_summaries(
         with open(candidate_path, "r", encoding="utf-8") as f:
             candidate = json.load(f)
 
-        baseline_by_id = {item["scenario_id"]: item for item in baseline.get("results", [])}
-        rows = []
-        for item in candidate.get("results", []):
-            scenario_id = item["scenario_id"]
-            old = baseline_by_id.get(scenario_id, {})
-            old_score = old.get("metrics", {}).get("overall_score")
-            new_score = item.get("metrics", {}).get("overall_score")
-            delta = (
-                round(new_score - old_score, 4)
-                if isinstance(old_score, (int, float)) and isinstance(new_score, (int, float))
-                else None
-            )
-            rows.append(
-                {
-                    "scenario_id": scenario_id,
-                    "baseline_score": old_score,
-                    "candidate_score": new_score,
-                    "delta": delta,
-                    "regressed": isinstance(delta, (int, float)) and delta < -0.02,
-                }
-            )
+        comparison = compare_evaluation_summaries(current=candidate, baseline=baseline)
+        rows = [
+            {
+                **row,
+                "candidate_score": row.get("current_score"),
+            }
+            for row in comparison["rows"]
+        ]
         payload = {
             "baseline": baseline_path,
             "candidate": candidate_path,
             "baseline_average": baseline.get("average_score"),
             "candidate_average": candidate.get("average_score"),
             "rows": rows,
-            "passed": not any(row["regressed"] for row in rows),
+            "regression_analysis": comparison.get("regression_analysis", {}),
+            "metric_regression_count": comparison.get("metric_regression_count", 0),
+            "missing_scenario_count": comparison.get("missing_scenario_count", 0),
+            "new_scenario_count": comparison.get("new_scenario_count", 0),
+            "passed": comparison["passed"],
         }
         if as_json:
-            console.print(json.dumps(payload, indent=2, ensure_ascii=False))
+            sys.stdout.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
             return 0 if payload["passed"] else 3
 
         table = Table(title="Benchmark Summary Diff")
@@ -829,14 +1061,29 @@ def compare_benchmark_summaries(
         table.add_column("Delta", justify="right")
         table.add_column("Status")
         for row in rows:
+            status = row.get("status")
+            if status == "new":
+                status_text = "new"
+            elif status == "missing":
+                status_text = "MISSING"
+            else:
+                status_text = "REGRESSION" if row.get("regressed") else "ok"
             table.add_row(
                 row["scenario_id"],
-                str(row["baseline_score"]),
-                str(row["candidate_score"]),
-                str(row["delta"]),
-                "REGRESSION" if row["regressed"] else "ok",
+                "n/a" if row.get("baseline_score") is None else str(row["baseline_score"]),
+                "n/a" if row.get("candidate_score") is None else str(row["candidate_score"]),
+                "n/a" if row.get("delta") is None else str(row["delta"]),
+                status_text,
             )
         console.print(table)
+        analysis = comparison.get("regression_analysis") or {}
+        if analysis.get("root_cause_counts"):
+            root_table = Table(title="Regression Root Causes")
+            root_table.add_column("Root Cause")
+            root_table.add_column("Count", justify="right")
+            for cause, count in analysis["root_cause_counts"].items():
+                root_table.add_row(str(cause), str(count))
+            console.print(root_table)
         return 0 if payload["passed"] else 3
     except Exception as e:
         error_console.print(f"[red][ERR] Benchmark compare 失败：{e}[/red]")
@@ -906,6 +1153,11 @@ def execute_evaluation(args: argparse.Namespace) -> int:
             threshold_overrides=_parse_threshold_overrides(args.threshold),
             compare_summary_path=args.compare_summary,
             determinism_repeats=args.determinism_repeats,
+            enable_verification=args.enable_verify,
+            max_revisions=args.max_revisions,
+            enable_reflection=args.enable_reflect,
+            enable_plan_refinement=args.enable_refine_plan,
+            enable_parallel_tool_execution=args.enable_parallel_tools,
         )
 
         table = Table(title="SDYJ Evaluation")
@@ -932,15 +1184,75 @@ def execute_evaluation(args: argparse.Namespace) -> int:
                 console.print(f"[dim]report: {item['report_path']}[/dim]")
             if item.get("trace_path"):
                 console.print(f"[dim]trace: {item['trace_path']}[/dim]")
+        comparison = summary.get("comparison")
+        if comparison:
+            analysis = comparison.get("regression_analysis") or {}
+            console.print(
+                "[green][OK] comparison: "
+                f"compared={analysis.get('compared_scenario_count', 0)}, "
+                f"metric_regressions={comparison.get('metric_regression_count', 0)}, "
+                f"missing_scenarios={comparison.get('missing_scenario_count', 0)}[/green]"
+            )
+            if analysis.get("root_cause_counts"):
+                console.print(f"[yellow]comparison root causes: {analysis['root_cause_counts']}[/yellow]")
         if not summary.get("passed", True):
             console.print("[red][FAIL] Benchmark gate 未通过[/red]")
             for failed in summary.get("failed_scenarios", []):
                 console.print(f"[red]- {failed['scenario_id']}: {failed['failed_thresholds']}[/red]")
+            comparison = summary.get("comparison")
+            if comparison and not comparison.get("passed", True):
+                analysis = comparison.get("regression_analysis") or {}
+                for row in comparison.get("regressions", []):
+                    console.print(f"[red]- comparison regression {row['scenario_id']}: {row['metric_regressions']}[/red]")
+                for scenario_id in analysis.get("missing_scenarios", []):
+                    console.print(f"[red]- comparison missing scenario: {scenario_id}[/red]")
             return 3
         return 0
     except Exception as e:
         error_console.print(f"[red][ERR] 评测失败：{e}[/red]")
         return 1
+
+
+def execute_external_benchmark(args: argparse.Namespace) -> int:
+    """Run an external/public benchmark slice and print a compact summary."""
+    try:
+        summary = run_external_benchmark(
+            suite=args.suite,
+            source=args.source,
+            split=args.split,
+            limit=args.limit,
+            output_dir=args.output_dir,
+            predictions_path=args.predictions,
+            data_path=args.data_path,
+            hf_dataset=args.hf_dataset,
+            hf_config=args.hf_config,
+            fail_under=args.fail_under,
+        )
+    except Exception as e:
+        error_console.print(f"[red][ERR] External benchmark failed: {e}[/red]")
+        return 1
+
+    table = Table(title="SDYJ External Benchmark")
+    table.add_column("Suite")
+    table.add_column("Source")
+    table.add_column("Examples", justify="right")
+    table.add_column("Correct", justify="right")
+    table.add_column("Accuracy", justify="right")
+    table.add_column("Passed")
+    table.add_row(
+        summary["suite"],
+        summary["source"],
+        str(summary["example_count"]),
+        str(summary["correct"]),
+        f"{summary['accuracy']:.4f}",
+        "yes" if summary["passed"] else "no",
+    )
+    console.print(table)
+    console.print(f"[green][OK] summary: {summary['artifacts']['summary']}[/green]")
+    console.print(f"[dim]predictions: {summary['artifacts']['predictions']}[/dim]")
+    console.print(f"[dim]graded: {summary['artifacts']['graded']}[/dim]")
+    console.print(f"[dim]failure analysis: {summary['artifacts']['failure_analysis_md']}[/dim]")
+    return 0 if summary["passed"] else 3
 
 
 def _add_runtime_options(parser: argparse.ArgumentParser, saved_config: Dict[str, Any]) -> None:
@@ -985,6 +1297,36 @@ def _add_runtime_options(parser: argparse.ArgumentParser, saved_config: Dict[str
         default=saved_config.get("show_steps", False),
         help="显示详细执行步骤"
     )
+    parser.add_argument(
+        "--no-verify",
+        action="store_true",
+        default=saved_config.get("skip_verification", False),
+        help="跳过 v0.6 verifier loop（不对报告做自动质量评分与修订）",
+    )
+    parser.add_argument(
+        "--max-revisions",
+        type=int,
+        default=saved_config.get("max_revisions", DEFAULT_MAX_REVISIONS),
+        help=f"verifier 不通过时最多修订几次（默认：{DEFAULT_MAX_REVISIONS}）",
+    )
+    parser.add_argument(
+        "--no-reflect",
+        action="store_true",
+        default=saved_config.get("skip_reflection", False),
+        help="跳过 v0.6 researcher 反思（一次查询无果就放弃，不重写查询）",
+    )
+    parser.add_argument(
+        "--no-refine-plan",
+        action="store_true",
+        default=saved_config.get("skip_plan_refinement", False),
+        help="跳过 v0.6 mid-flight plan refinement（始终按初始计划执行剩余 task）",
+    )
+    parser.add_argument(
+        "--no-parallel-tools",
+        action="store_true",
+        default=saved_config.get("skip_parallel_tool_execution", False),
+        help="跳过 v0.6 task 内并发检索（恢复 query/source 顺序执行）",
+    )
 
 
 def _create_config_from_args(args: argparse.Namespace) -> CLIConfig:
@@ -1000,6 +1342,11 @@ def _create_config_from_args(args: argparse.Namespace) -> CLIConfig:
         output_dir=args.output_dir,
         show_steps=args.show_steps,
         output_format=args.output_format,
+        skip_verification=getattr(args, "no_verify", False),
+        max_revisions=getattr(args, "max_revisions", DEFAULT_MAX_REVISIONS),
+        skip_reflection=getattr(args, "no_reflect", False),
+        skip_plan_refinement=getattr(args, "no_refine_plan", False),
+        skip_parallel_tool_execution=getattr(args, "no_parallel_tools", False),
     )
 
 
@@ -1012,19 +1359,21 @@ def parse_args(argv: Any) -> argparse.Namespace:
         description="SDYJ 深度研究系统 - 基于 LangGraph 的多智能体研究系统",
         epilog=(
             "示例：\n"
-            "  python main.py research \"Transformer 架构最新进展\"\n"
-            "  python main.py \"Transformer 架构最新进展\"\n"
-            "  python main.py list-models deepseek\n"
-            "  python main.py eval --max-scenarios 1\n"
-            "  python main.py inspect-run\n"
-            "  python main.py config-info"
+            "  sdyj research \"Transformer 架构最新进展\"\n"
+            "  sdyj \"Transformer 架构最新进展\"\n"
+            "  sdyj list-models deepseek\n"
+            "  sdyj eval --max-scenarios 1\n"
+            "  sdyj inspect-run\n"
+            "  sdyj doctor\n"
+            "  sdyj release-check\n"
+            "  sdyj config-info"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     root_parser.add_argument(
         "--version",
         action="version",
-        version="SDYJ Deep Research System 0.5.0"
+        version=f"SDYJ Deep Research System {__version__}"
     )
 
     if argv and argv[0] in {"-h", "--help", "--version"}:
@@ -1116,6 +1465,34 @@ def parse_args(argv: Any) -> argparse.Namespace:
         args.runs_command = args.runs_command or "list"
         return args
 
+    if argv and argv[0] == "benchmark" and len(argv) > 1 and argv[1] == "external":
+        parser = argparse.ArgumentParser(description="Run a public/external benchmark slice")
+        parser.add_argument("--suite", default="gaia", choices=["gaia"], help="External suite name")
+        parser.add_argument(
+            "--source",
+            default="local",
+            choices=["local", "hf", "jsonl"],
+            help="Example source: bundled smoke fixture, Hugging Face, or a JSONL file",
+        )
+        parser.add_argument("--split", default="validation", help="Dataset split for --source hf")
+        parser.add_argument("--limit", type=int, default=5, help="Maximum examples to grade")
+        parser.add_argument(
+            "--output-dir",
+            default=saved_config.get("output_dir", "./outputs"),
+            help="Directory for benchmark artifacts",
+        )
+        parser.add_argument(
+            "--predictions",
+            help="JSONL file with task_id and prediction fields; omitted uses fixture baseline predictions",
+        )
+        parser.add_argument("--data-path", help="JSONL examples path for --source jsonl")
+        parser.add_argument("--hf-dataset", default="gaia-benchmark/GAIA", help="HF dataset id")
+        parser.add_argument("--hf-config", default="2023_level1", help="HF dataset config")
+        parser.add_argument("--fail-under", type=float, default=None, help="Fail if accuracy is below this value")
+        args = parser.parse_args(argv[2:])
+        args.command = "benchmark-external"
+        return args
+
     if argv and argv[0] == "benchmark" and len(argv) > 1 and argv[1] == "compare":
         parser = argparse.ArgumentParser(description="比较两个 benchmark summary JSON")
         parser.add_argument("baseline", help="基准 eval_summary JSON")
@@ -1200,6 +1577,36 @@ def parse_args(argv: Any) -> argparse.Namespace:
             default=1,
             help="离线模式重复运行次数，用于检查 benchmark 确定性",
         )
+        parser.add_argument(
+            "--enable-verify",
+            action="store_true",
+            default=False,
+            help="启用 v0.6 verifier loop 评估报告质量并触发自动修订（默认关闭以兼容 v0.5 benchmark gate）",
+        )
+        parser.add_argument(
+            "--max-revisions",
+            type=int,
+            default=DEFAULT_MAX_REVISIONS,
+            help=f"verifier 启用时的最大修订次数（默认：{DEFAULT_MAX_REVISIONS}）",
+        )
+        parser.add_argument(
+            "--enable-reflect",
+            action="store_true",
+            default=False,
+            help="启用 v0.6 researcher 反思（弱结果时重写查询并重试，默认关闭以兼容 v0.5 benchmark gate）",
+        )
+        parser.add_argument(
+            "--enable-refine-plan",
+            action="store_true",
+            default=False,
+            help="Enable v0.6 mid-flight plan refinement during eval runs (default off for v0.5-compatible gates).",
+        )
+        parser.add_argument(
+            "--enable-parallel-tools",
+            action="store_true",
+            default=False,
+            help="Enable v0.6 task-level parallel tool execution during eval runs (default off for v0.5-compatible gates).",
+        )
         args = parser.parse_args(argv[1:])
         args.command = "eval"
         return args
@@ -1211,6 +1618,32 @@ def parse_args(argv: Any) -> argparse.Namespace:
         args.command = "config-info"
         args.query = None
         args.interactive = False
+        return args
+
+    if argv and argv[0] == "doctor":
+        parser = argparse.ArgumentParser(description="检查本地/部署环境，不调用真实 LLM 或搜索 API")
+        parser.add_argument(
+            "--provider",
+            default=saved_config.get("provider") or os.getenv("LLM_PROVIDER", "deepseek"),
+            choices=["deepseek", "openai", "claude", "gemini"],
+            help="检查哪个 LLM provider 的 API key",
+        )
+        parser.add_argument(
+            "--strict",
+            action="store_true",
+            help="将可选依赖或 MCP/Tavily 警告也视为失败",
+        )
+        args = parser.parse_args(argv[1:])
+        args.command = "doctor"
+        return args
+
+    if argv and argv[0] == "release-check":
+        parser = create_release_check_parser(
+            prog="sdyj release-check",
+            default_provider=saved_config.get("provider") or os.getenv("LLM_PROVIDER", "deepseek"),
+        )
+        args = parser.parse_args(argv[1:])
+        args.command = "release-check"
         return args
 
     if argv and argv[0] == "research":
@@ -1270,6 +1703,9 @@ def main(argv: Any = None) -> int:
     if args.command == "benchmark-compare":
         return compare_benchmark_summaries(args.baseline, args.candidate, as_json=args.json)
 
+    if args.command == "benchmark-external":
+        return execute_external_benchmark(args)
+
     if args.command == "eval":
         if args.live and not get_api_key_for_provider(args.provider):
             expected_envs = " 或 ".join(PROVIDER_API_KEY_ENVS.get(args.provider, ()))
@@ -1277,6 +1713,12 @@ def main(argv: Any = None) -> int:
             error_console.print(f"请在 .env 文件中设置 {expected_envs}")
             return 2
         return execute_evaluation(args)
+
+    if args.command == "doctor":
+        return run_doctor(provider=args.provider, strict=args.strict)
+
+    if args.command == "release-check":
+        return run_release_readiness_from_args(args)
 
     config = _create_config_from_args(args)
 
