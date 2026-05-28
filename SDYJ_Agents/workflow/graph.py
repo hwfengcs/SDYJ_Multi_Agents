@@ -249,71 +249,68 @@ class ResearchWorkflow:
         thread_id = trace.get("run_id", "1") if trace else "1"
         config = {"configurable": {"thread_id": thread_id}}
 
-        # Track if we've handled the approval
-        approval_handled = False
+        stream_input = initial_state
 
-        # Stream execution
-        for output in self.graph.stream(initial_state, config=config):
-            # Yield the output first
-            yield output
+        # LangGraph interrupts before every human_review node. A rejected plan
+        # routes back to Planner and creates another interrupt, so the resume
+        # loop must handle approval more than once.
+        while True:
+            interrupted = False
 
-            # Check if we hit an interrupt
-            if "__interrupt__" in output and not approval_handled:
-                # Get the current state from the graph
+            for output in self.graph.stream(stream_input, config=config):
+                yield output
+
+                if "__interrupt__" not in output:
+                    continue
+
                 current_snapshot = self.graph.get_state(config)
                 current_state = current_snapshot.values
+                if not isinstance(current_state, dict) or not current_state.get('research_plan'):
+                    return
 
-                # Check if this state needs approval (we interrupt after planning, before human_review)
-                if isinstance(current_state, dict) and current_state.get('research_plan'):
-                    # If auto-approve, set plan_approved to True
-                    if auto_approve:
+                current_state['current_step'] = 'awaiting_approval'
+
+                if auto_approve:
+                    current_state['plan_approved'] = True
+                    current_state['user_feedback'] = None
+                    record_decision(
+                        current_state.get("trace"),
+                        node="human_review",
+                        decision="plan_auto_approved_at_interrupt",
+                        reason="auto_approve stream interrupt handling",
+                    )
+                elif human_approval_callback:
+                    approved, feedback = human_approval_callback(current_state)
+
+                    if approved:
                         current_state['plan_approved'] = True
                         current_state['user_feedback'] = None
                         record_decision(
                             current_state.get("trace"),
                             node="human_review",
-                            decision="plan_auto_approved_at_interrupt",
-                            reason="auto_approve stream interrupt handling",
+                            decision="plan_approved",
+                            reason="human callback approved the plan",
                         )
-                        self.graph.update_state(config, current_state)
-                    # Otherwise, ask user via callback
-                    elif human_approval_callback and not current_state.get('plan_approved', False):
-                        # Set the step for display
-                        current_state['current_step'] = 'awaiting_approval'
+                    else:
+                        current_state['plan_approved'] = False
+                        current_state['user_feedback'] = feedback
+                        record_decision(
+                            current_state.get("trace"),
+                            node="human_review",
+                            decision="plan_rejected",
+                            reason="human callback requested revision",
+                            metadata={"feedback": feedback},
+                        )
+                else:
+                    return
 
-                        # Call the approval callback
-                        approved, feedback = human_approval_callback(current_state)
+                self.graph.update_state(config, current_state)
+                stream_input = None
+                interrupted = True
+                break
 
-                        # Update the state
-                        if approved:
-                            current_state['plan_approved'] = True
-                            current_state['user_feedback'] = None
-                            record_decision(
-                                current_state.get("trace"),
-                                node="human_review",
-                                decision="plan_approved",
-                                reason="human callback approved the plan",
-                            )
-                        else:
-                            current_state['plan_approved'] = False
-                            current_state['user_feedback'] = feedback
-                            record_decision(
-                                current_state.get("trace"),
-                                node="human_review",
-                                decision="plan_rejected",
-                                reason="human callback requested revision",
-                                metadata={"feedback": feedback},
-                            )
-
-                        # Update graph state
-                        self.graph.update_state(config, current_state)
-
-                    approval_handled = True
-
-                    # Continue from this point
-                    for continue_output in self.graph.stream(None, config=config):
-                        yield continue_output
-                    return  # Exit after handling approval
+            if not interrupted:
+                return
 
     def get_workflow_schema(self) -> dict:
         """

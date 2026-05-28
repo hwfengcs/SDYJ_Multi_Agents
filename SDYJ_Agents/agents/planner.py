@@ -140,7 +140,13 @@ class Planner:
             if start != -1 and end > start:
                 json_str = response[start:end]
                 modified_plan = json.loads(json_str)
+                for task in modified_plan.get('sub_tasks', []):
+                    task.setdefault('status', 'pending')
                 state['research_plan'] = modified_plan
+                state['estimated_iterations'] = modified_plan.get(
+                    'estimated_iterations',
+                    state.get('estimated_iterations', 2),
+                )
         except json.JSONDecodeError:
             # Keep current plan if parsing fails
             pass

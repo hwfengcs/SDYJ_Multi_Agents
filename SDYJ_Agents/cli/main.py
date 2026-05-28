@@ -8,8 +8,10 @@ Refactored to follow the example.py structure with argparse and config persisten
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,10 +19,12 @@ from typing import Any, Dict, Tuple
 from datetime import datetime
 
 from dotenv import load_dotenv
-from rich.console import Console
+from rich import box
+from rich.align import Align
+from rich.console import Console, Group
 from rich.panel import Panel
-from rich.markdown import Markdown
 from rich.table import Table
+from rich.text import Text
 
 from ..evaluation import run_evaluation
 from ..evaluation.scenarios import list_scenarios
@@ -84,6 +88,13 @@ PROVIDER_MODELS = {
     "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"],
 }
 
+ACCENT = "bright_white"
+SUBTLE = "white"
+MUTED = "bright_black"
+SUCCESS = "green"
+WARNING = "yellow"
+ERROR = "red"
+
 
 def load_config_from_file() -> Dict[str, Any]:
     """从配置文件加载设置"""
@@ -110,9 +121,9 @@ def save_config_to_file(config: CLIConfig) -> None:
         }
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config_data, f, indent=2, ensure_ascii=False)
-        console.print("[green][OK] 配置已保存[/green]")
+        status_line("保存", "配置已写入 config.json", SUCCESS)
     except Exception as e:
-        console.print(f"[red][ERR] 配置保存失败：{e}[/red]")
+        status_line("错误", f"配置保存失败：{e}", ERROR)
 
 
 def get_api_key_for_provider(provider: str) -> str | None:
@@ -124,16 +135,239 @@ def get_api_key_for_provider(provider: str) -> str | None:
     return None
 
 
+def yes_no(value: bool) -> str:
+    """Format a boolean value for compact CLI displays."""
+    return "是" if value else "否"
+
+
+def status_line(label: str, message: str, style: str = ACCENT) -> None:
+    """Print a compact, modern status line."""
+    console.print(f"[bold white]{label:<6}[/] [{style}]{message}[/]")
+
+
+def compact_text(value: Any, limit: int = 140) -> str:
+    """Collapse whitespace and keep terminal copy readable."""
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    width = 0
+    output = []
+    for char in text:
+        char_width = 2 if ord(char) > 127 else 1
+        if width + char_width > limit:
+            return f"{''.join(output).rstrip()}..."
+        output.append(char)
+        width += char_width
+    if output:
+        return text
+    return ""
+
+
+def compact_list(values: list[Any], limit: int = 3) -> str:
+    """Render a short list without vertical wrapping noise."""
+    items = [compact_text(value, 48) for value in values if str(value or "").strip()]
+    if not items:
+        return "N/A"
+    visible = items[:limit]
+    suffix = f"；另有 {len(items) - limit} 条" if len(items) > limit else ""
+    return "；".join(visible) + suffix
+
+
+def display_status(status: str | None) -> str:
+    """Translate internal task status for users."""
+    return {
+        "pending": "待执行",
+        "in_progress": "进行中",
+        "completed": "已完成",
+    }.get(str(status or "pending"), str(status or "待执行"))
+
+
+def render_config_panel(config: CLIConfig, title: str = "当前配置") -> Panel:
+    """Render runtime configuration as a compact table."""
+    key_status = "已配置" if get_api_key_for_provider(config.provider) else "未配置"
+    env_names = ", ".join(PROVIDER_API_KEY_ENVS.get(config.provider, ()))
+
+    table = Table.grid(expand=True)
+    table.add_column(style=SUBTLE, ratio=1)
+    table.add_column(style="white", ratio=2)
+    table.add_row("提供商", f"[bold]{config.provider}[/]")
+    table.add_row("模型", config.model)
+    table.add_row("最大迭代", str(config.max_iterations))
+    table.add_row("自动批准", yes_no(config.auto_approve))
+    table.add_row("输出格式", config.output_format.upper())
+    table.add_row("输出目录", config.output_dir)
+    table.add_row("显示步骤", yes_no(config.show_steps))
+    table.add_row("API Key", f"{key_status} [{SUBTLE}]({env_names})[/]")
+
+    return Panel(
+        table,
+        title=f"[bold {ACCENT}]{title}[/]",
+        border_style=ACCENT,
+        box=box.ROUNDED,
+        padding=(1, 2),
+    )
+
+
+def render_plan_panel(plan: Dict[str, Any]) -> Panel:
+    """Render a research plan as readable vertical summaries."""
+    lines = [
+        Text("研究目标", style="bold white"),
+        Text(compact_text(plan.get("research_goal", "N/A"), 180), style="white"),
+        Text(""),
+        Text("完成标准", style="bold white"),
+        Text(compact_text(plan.get("completion_criteria", "N/A"), 180), style="white"),
+        Text(""),
+        Text(f"预计迭代：{plan.get('estimated_iterations', 'N/A')}", style="white"),
+        Text(""),
+        Text("任务摘要", style="bold white"),
+    ]
+
+    for task in plan.get("sub_tasks", []):
+        task_id = task.get("task_id", "?")
+        priority = task.get("priority", "N/A")
+        sources = ", ".join(task.get("sources", [])) or "N/A"
+        status = display_status(task.get("status"))
+        lines.extend(
+            [
+                Text(""),
+                Text(f"{task_id}. {compact_text(task.get('description', ''), 150)}", style="bold white"),
+                Text(f"   优先级：{priority}    来源：{sources}    状态：{status}", style="white"),
+                Text(f"   查询：{compact_list(task.get('search_queries', []), limit=2)}", style="white"),
+            ]
+        )
+
+    return Panel(
+        Group(*lines),
+        title="[bold white]研究计划[/]",
+        subtitle=f"[{MUTED}]批准后开始检索；需要调整就选择微调[/]",
+        border_style="white",
+        box=box.ROUNDED,
+        padding=(1, 2),
+    )
+
+
+def render_task_panel(task: Dict[str, Any], iteration: int, max_iterations: int) -> Panel:
+    """Render the active research task."""
+    return Panel(
+        Group(
+            Text(f"进度：{iteration}/{max_iterations}", style="bold white"),
+            Text(compact_text(task.get("description", "未知任务"), 160), style="white"),
+            Text(f"来源：{', '.join(task.get('sources', [])) or 'N/A'}", style="white"),
+            Text(f"查询：{compact_list(task.get('search_queries', []), limit=2)}", style="white"),
+        ),
+        title="[bold white]正在检索[/]",
+        border_style="white",
+        box=box.ROUNDED,
+        padding=(1, 2),
+    )
+
+
+def clean_summary_text(text: str) -> str:
+    """Remove markup that is noisy in a short CLI summary."""
+    text = html.unescape(str(text or ""))
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\[E\d+\]", "", text)
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"[#*_`>|-]+", " ", text)
+    return compact_text(text, 66)
+
+
+def extract_markdown_section(report: str, heading: str) -> str:
+    """Extract a markdown section body by heading text."""
+    pattern = rf"(?is)^##\s+{re.escape(heading)}\s*(.*?)(?=^##\s+|\Z)"
+    match = re.search(pattern, report or "", flags=re.MULTILINE)
+    return match.group(1).strip() if match else ""
+
+
+def summarize_report_for_cli(report: str, output_format: str, limit: int = 5) -> list[str]:
+    """Create a concise terminal summary from the generated report artifact."""
+    candidates: list[str] = []
+
+    if output_format == "json":
+        try:
+            payload = json.loads(report)
+            if payload.get("summary"):
+                candidates.append(payload["summary"])
+            for item in payload.get("key_findings", [])[: limit + 1]:
+                if isinstance(item, dict) and item.get("claim"):
+                    candidates.append(item["claim"])
+        except json.JSONDecodeError:
+            candidates.append(report)
+    elif output_format == "html":
+        text = re.sub(r"</(p|li|h\d)>", "\n", report, flags=re.IGNORECASE)
+        text = re.sub(r"<[^>]+>", " ", text)
+        candidates.extend(line for line in text.splitlines() if line.strip())
+    else:
+        executive = extract_markdown_section(report, "执行摘要")
+        findings = extract_markdown_section(report, "核心发现")
+        if executive:
+            candidates.extend(line for line in executive.splitlines() if line.strip())
+        if findings:
+            candidates.extend(line for line in findings.splitlines() if line.strip())
+        if not candidates:
+            candidates.extend(line for line in (report or "").splitlines() if line.strip())
+
+    summary = []
+    seen = set()
+    for item in candidates:
+        cleaned = clean_summary_text(item)
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        summary.append(cleaned)
+        if len(summary) >= limit:
+            break
+    return summary or ["报告已生成，建议打开文件查看完整内容。"]
+
+
+def render_completion_panel(
+    report: str,
+    output_format: str,
+    report_path: Path,
+    trace_path: Path | None,
+) -> Panel:
+    """Render the only terminal output users need after report generation."""
+    lines = [
+        Text("本次研究已完成。", style="bold green"),
+        Text(""),
+        Text("精华总结", style="bold white"),
+    ]
+    for index, item in enumerate(summarize_report_for_cli(report, output_format), 1):
+        lines.append(Text(f"{index}. {item}", style="white"))
+
+    lines.extend(
+        [
+            Text(""),
+            Text("完整报告已保存，请打开下面的文件查看细节：", style="bold yellow"),
+            Text(str(report_path), style="bold white"),
+        ]
+    )
+    if trace_path:
+        lines.append(Text(f"Trace：{trace_path}", style=MUTED))
+
+    return Panel(
+        Group(*lines),
+        title="[bold green]研究完成[/]",
+        border_style=SUCCESS,
+        box=box.ROUNDED,
+        padding=(1, 2),
+    )
+
+
 def print_separator(char: str = "─", length: int = 70) -> None:
     """打印分隔线"""
-    console.print(f"[cyan]{char * length}[/cyan]")
+    console.print(f"[{SUBTLE}]{char * length}[/]")
 
 
 def print_header(text: str) -> None:
     """打印标题"""
-    console.print(Panel.fit(
-        f"[bold cyan]{text}[/bold cyan]",
-        border_style="cyan"
+    header = Group(
+        Align.center(Text(text, style="bold white")),
+        Align.center(Text("LangGraph Multi-Agent Research Console", style=ACCENT)),
+    )
+    console.print(Panel(
+        header,
+        border_style=ACCENT,
+        box=box.ROUNDED,
+        padding=(1, 4),
     ))
 
 
@@ -141,71 +375,64 @@ def print_welcome() -> None:
     """打印欢迎界面"""
     console.print("\n")
     print_header("SDYJ 深度研究系统")
-    console.print("[yellow]欢迎使用基于 LangGraph 的多智能体研究系统！[/yellow]")
 
     # 显示配置文件状态
     if CONFIG_FILE.exists():
-        console.print(f"[green][OK] 已加载配置文件: {CONFIG_FILE.name}[/green]")
+        status_line("配置", f"已加载 {CONFIG_FILE.name}", SUCCESS)
     else:
-        console.print("[cyan][INFO] 使用默认配置 (max_iterations=5, auto_approve=False)[/cyan]")
+        status_line("配置", "使用默认配置 max_iterations=5, auto_approve=False")
     console.print()
 
 
 def print_menu() -> None:
     """打印主菜单"""
-    console.print("\n[bold cyan]主菜单：[/bold cyan]\n")
-    console.print("  [green]1.[/green] 执行研究任务")
-    console.print("  [green]2.[/green] 查看可用模型")
-    console.print("  [green]3.[/green] 配置设置")
-    console.print("  [green]4.[/green] 查看当前配置")
-    console.print("  [green]5.[/green] 退出程序")
-    console.print()
+    table = Table.grid(expand=True)
+    table.add_column("key", style=f"bold {ACCENT}", width=4, justify="center", no_wrap=True)
+    table.add_column("action", style="white", ratio=2)
+    table.add_column("hint", style=SUBTLE, ratio=3)
+    table.add_row("1", "执行研究任务", "生成计划、审批、检索并输出报告")
+    table.add_row("2", "查看可用模型", "按 provider 浏览模型名称")
+    table.add_row("3", "配置设置", "调整 provider、模型、输出与审批")
+    table.add_row("4", "查看当前配置", "检查运行参数和 API Key 状态")
+    table.add_row("5", "退出程序", "结束当前 CLI 会话")
+    console.print(Panel(
+        table,
+        title=f"[bold {ACCENT}]主菜单[/]",
+        border_style=SUBTLE,
+        box=box.ROUNDED,
+        padding=(1, 2),
+    ))
 
 
 def show_models(provider: str) -> None:
     """显示可用模型列表"""
-    print_separator("-")
-    console.print(f"\n[bold cyan]{provider.upper()} 的可用模型：[/bold cyan]\n")
+    table = Table(
+        title=f"{provider.upper()} 可用模型",
+        box=box.ROUNDED,
+        border_style=ACCENT,
+        header_style=f"bold {ACCENT}",
+        expand=True,
+    )
+    table.add_column("#", justify="right", width=4, style=SUBTLE)
+    table.add_column("Model", style="white")
+    table.add_column("默认", justify="center", width=8)
 
-    for model in PROVIDER_MODELS.get(provider, []):
-        console.print(f"  - {model}")
-    console.print()
-    print_separator("-")
+    default_model = PROVIDER_DEFAULT_MODELS.get(provider)
+    for index, model in enumerate(PROVIDER_MODELS.get(provider, []), 1):
+        table.add_row(str(index), model, "是" if model == default_model else "")
+    console.print(table)
 
 
 def print_config_info(config: CLIConfig) -> None:
     """显示当前 CLI 配置和密钥状态。"""
-    print_separator("-")
-    console.print("[bold cyan]当前配置：[/bold cyan]\n")
-    console.print(f"  提供商：[yellow]{config.provider}[/yellow]")
-    console.print(f"  模型：[yellow]{config.model}[/yellow]")
-    console.print(f"  最大迭代次数：[yellow]{config.max_iterations}[/yellow]")
-    console.print(f"  自动批准：[yellow]{'是' if config.auto_approve else '否'}[/yellow]")
-    console.print(f"  输出目录：[yellow]{config.output_dir}[/yellow]")
-    console.print(f"  输出格式：[yellow]{config.output_format.upper()}[/yellow]")
-    console.print(f"  显示步骤：[yellow]{'是' if config.show_steps else '否'}[/yellow]")
-
-    key_status = "已配置" if get_api_key_for_provider(config.provider) else "未配置"
-    env_names = ", ".join(PROVIDER_API_KEY_ENVS.get(config.provider, ()))
-    console.print(f"  API Key：[yellow]{key_status}[/yellow] ({env_names})")
-    console.print()
-    print_separator("-")
+    console.print(render_config_panel(config))
 
 
 def configure_settings(config: CLIConfig) -> None:
     """配置设置"""
-    print_separator("-")
-    console.print("[bold cyan]当前配置：[/bold cyan]\n")
-    console.print(f"  提供商：[yellow]{config.provider}[/yellow]")
-    console.print(f"  模型：[yellow]{config.model}[/yellow]")
-    console.print(f"  最大迭代次数：[yellow]{config.max_iterations}[/yellow]")
-    console.print(f"  自动批准计划：[yellow]{'是' if config.auto_approve else '否'}[/yellow]")
-    console.print(f"  输出目录：[yellow]{config.output_dir}[/yellow]")
-    console.print(f"  输出格式：[yellow]{config.output_format.upper()}[/yellow]")
-    console.print(f"  显示步骤：[yellow]{'是' if config.show_steps else '否'}[/yellow]")
+    console.print(render_config_panel(config, title="配置设置"))
+    status_line("提示", "直接回车保留当前值")
     console.print()
-
-    console.print("[cyan]选择要修改的设置（直接回车跳过）：[/cyan]\n")
 
     config_changed = False
 
@@ -313,61 +540,70 @@ def human_approval_callback(state: Dict[str, Any]) -> Tuple[bool, str]:
     Returns:
         (approved: bool, feedback: str) - 是否批准和用户反馈
     """
-    console.print("\n")
-    print_separator("=")
-    console.print("[bold yellow]等待您的决策[/bold yellow]\n")
-
-    console.print("[cyan]您可以选择：[/cyan]")
-    console.print("  [green]1.[/green] 批准计划 - 开始执行研究")
-    console.print("  [green]2.[/green] 拒绝计划 - 提供反馈重新制定")
-    console.print("  [green]3.[/green] 取消任务 - 退出研究")
     console.print()
+    actions = Table.grid(expand=True)
+    actions.add_column("key", style=f"bold {WARNING}", width=4, justify="center")
+    actions.add_column("action", style="white", ratio=2)
+    actions.add_column("hint", style=SUBTLE, ratio=3)
+    actions.add_row("1", "批准计划", "立即开始执行检索")
+    actions.add_row("2", "微调计划", "输入反馈后重新生成计划")
+    actions.add_row("3", "取消任务", "退出本次研究流程")
+    console.print(Panel(
+        actions,
+        title=f"[bold {WARNING}]等待决策[/]",
+        border_style=WARNING,
+        box=box.ROUNDED,
+        padding=(1, 2),
+    ))
 
-    choice = input("请选择操作 (1-3): ").strip()
+    choice = input("请选择操作 [1/2/3]: ").strip()
 
     if choice == "1":
         # 批准计划
-        console.print("[green][OK] 计划已批准，开始研究...[/green]\n")
-        print_separator("=")
+        status_line("审批", "计划已批准，开始研究", SUCCESS)
         return True, None
 
     elif choice == "2":
         # 拒绝并提供反馈
-        console.print("\n[yellow]请提供修改意见（描述您希望如何调整研究计划）：[/yellow]")
-        console.print("[dim]提示：您可以要求增加/删除某些研究方向，调整优先级等[/dim]\n")
+        console.print(f"\n[{WARNING}]请提供修改意见[/]")
+        console.print(f"[{SUBTLE}]例如：聚焦历史、减少检索源、增加近三年发展等[/]\n")
 
         feedback = input("> ").strip()
 
         if not feedback:
-            console.print("[yellow]未提供反馈，将重新生成计划...[/yellow]")
+            status_line("反馈", "未提供具体内容，将重新优化计划", WARNING)
             feedback = "请重新优化研究计划"
 
-        console.print("\n[cyan]已收到反馈，正在重新制定计划...[/cyan]\n")
-        print_separator("=")
+        status_line("反馈", "已收到，正在重新制定计划")
         return False, feedback
 
     elif choice == "3":
         # 取消任务
-        console.print("\n[yellow]任务已取消[/yellow]")
+        status_line("取消", "任务已取消", WARNING)
         raise KeyboardInterrupt("用户取消任务")
 
     else:
         # 无效选择，默认拒绝
-        console.print("[red]无效选择，请重新决策[/red]")
+        status_line("错误", "无效选择，请重新决策", ERROR)
         return human_approval_callback(state)
 
 
 def execute_research(config: CLIConfig, query: str = None) -> None:
     """执行研究任务"""
-    print_separator("-")
-    console.print("[bold cyan]执行研究任务[/bold cyan]\n")
+    console.print(Panel(
+        "输入一个开放式研究问题，系统会先生成计划，审批后再检索并生成报告。",
+        title=f"[bold {ACCENT}]执行研究任务[/]",
+        border_style=SUBTLE,
+        box=box.ROUNDED,
+        padding=(1, 2),
+    ))
     trace = None
 
     if not query:
-        query = input("请输入研究问题：\n> ").strip()
+        query = input("研究问题 > ").strip()
 
     if not query:
-        console.print("[red][ERR] 研究问题不能为空[/red]")
+        status_line("错误", "研究问题不能为空", ERROR)
         return
 
     logger = None
@@ -376,7 +612,7 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
         logger = setup_logger()
 
         # Load config from env after applying CLI overrides.
-        console.print("\n[dim]正在加载配置...[/dim]")
+        status_line("准备", "加载配置")
         os.environ['LLM_PROVIDER'] = config.provider
         env_cfg = load_config_from_env()
         env_cfg.llm.model = config.model
@@ -391,7 +627,7 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
         )
 
         # Create LLM
-        console.print(f"[dim]正在初始化 {config.provider.upper()} LLM...[/dim]")
+        status_line("模型", f"初始化 {config.provider.upper()} / {config.model}")
         base_llm = LLMFactory.create_llm(
             provider=env_cfg.llm.provider,
             api_key=env_cfg.llm.api_key,
@@ -400,7 +636,7 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
         llm = InstrumentedLLM(base_llm, trace)
 
         # Create agents
-        console.print("[dim]正在初始化智能体...[/dim]")
+        status_line("智能体", "初始化 Coordinator / Planner / Researcher / Rapporteur")
         coordinator = Coordinator(llm)
         planner = Planner(llm)
         researcher = Researcher(
@@ -412,14 +648,21 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
         rapporteur = Rapporteur(llm)
 
         # Create workflow
-        console.print("[dim]正在设置研究工作流...[/dim]\n")
+        status_line("工作流", "装配 LangGraph 状态机")
         workflow = ResearchWorkflow(coordinator, planner, researcher, rapporteur)
 
         # Run workflow
-        print_separator("-")
-        console.print(f"[bold green]开始研究：[/bold green]{query}\n")
+        console.print(Panel(
+            query,
+            title=f"[bold {SUCCESS}]开始研究[/]",
+            border_style=SUCCESS,
+            box=box.ROUNDED,
+            padding=(1, 2),
+        ))
 
         current_state = None
+        last_plan_signature = None
+        last_render_key = None
 
         # Always use stream_interactive to handle interrupts properly
         stream_iter = workflow.stream_interactive(
@@ -470,37 +713,39 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
 
                 # Display step updates
                 if step == 'planning':
-                    console.print("[cyan]正在创建研究计划...[/cyan]")
-                    if current_state.get('research_plan'):
-                        plan_display = planner.format_plan_for_display(current_state['research_plan'])
-                        console.print(Panel(plan_display, title="研究计划", border_style="blue"))
+                    plan = current_state.get('research_plan')
+                    if plan:
+                        plan_signature = json.dumps(plan, sort_keys=True, ensure_ascii=False)
+                        if plan_signature != last_plan_signature:
+                            console.print(render_plan_panel(plan))
+                            last_plan_signature = plan_signature
+                    elif last_render_key != ("planning", "pending"):
+                        status_line("规划", "正在创建研究计划")
+                        last_render_key = ("planning", "pending")
 
                 elif step == 'awaiting_approval':
-                    if config.auto_approve:
-                        console.print("[green][OK] 计划已自动批准[/green]")
+                    if config.auto_approve and last_render_key != ("approval", "auto"):
+                        status_line("审批", "计划已自动批准", SUCCESS)
+                        last_render_key = ("approval", "auto")
                     # Interactive approval is handled by the callback in stream_interactive
 
                 elif step == 'researching':
                     task = current_state.get('current_task', {})
                     iteration = current_state.get('iteration_count', 0)
-                    console.print(f"[cyan]正在研究：{task.get('description', '未知任务')}[/cyan]")
-                    console.print(f"[dim]迭代 {iteration}/{config.max_iterations}[/dim]")
+                    render_key = ("researching", iteration, task.get("task_id"))
+                    if render_key != last_render_key:
+                        console.print(render_task_panel(task, iteration, config.max_iterations))
+                        last_render_key = render_key
 
                 elif step == 'generating_report':
-                    console.print("[cyan]正在生成最终报告...[/cyan]")
+                    if last_render_key != ("report", "generating"):
+                        status_line("报告", "正在生成最终报告")
+                        last_render_key = ("report", "generating")
 
         # Get final report
         # Check completion status
         if current_state and current_state.get('final_report'):
             report = current_state['final_report']
-
-            # Display report
-            console.print("\n")
-            console.print(Panel(
-                Markdown(report),
-                title="研究报告",
-                border_style="green"
-            ))
 
             # Save report
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -517,7 +762,6 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
             output_path = output_dir / f"research_report_{timestamp}.{file_extension}"
 
             rapporteur.save_report(report, str(output_path))
-            console.print(f"\n[green][OK] 报告已保存至：{output_path}[/green]")
             trace = merge_trace_state(trace, current_state.get("trace"))
             trace_path = save_trace(
                 trace,
@@ -526,38 +770,43 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
                 report=report,
                 report_extension=file_extension,
             )
-            if trace_path:
-                console.print(f"[green][OK] 运行轨迹已保存至：{trace_path}[/green]")
+            console.print()
+            console.print(render_completion_panel(
+                report=report,
+                output_format=current_state.get('output_format', config.output_format),
+                report_path=output_path,
+                trace_path=trace_path,
+            ))
 
         elif current_state and current_state.get('simple_response'):
             # Simple query was handled, no need to show error
             trace = merge_trace_state(trace, current_state.get("trace"))
             trace_path = save_trace(trace, config.output_dir, final_state=current_state)
             if trace_path:
-                console.print(f"[green][OK] 运行轨迹已保存至：{trace_path}[/green]")
+                status_line("Trace", f"已保存至 {trace_path}", SUCCESS)
         else:
-            console.print("[red][ERR] 研究未成功完成[/red]")
+            status_line("错误", "研究未成功完成", ERROR)
             if current_state and isinstance(current_state, dict):
                 trace = merge_trace_state(trace, current_state.get("trace"))
             trace_path = save_trace(trace, config.output_dir, final_state=current_state)
             if trace_path:
-                console.print(f"[yellow][TRACE] 失败轨迹已保存至：{trace_path}[/yellow]")
+                status_line("Trace", f"失败轨迹已保存至 {trace_path}", WARNING)
 
         print_separator("-")
 
     except KeyboardInterrupt:
-        console.print("\n\n[yellow]任务已被用户中断[/yellow]")
+        status_line("中断", "任务已被用户中断", WARNING)
         trace_path = save_trace(trace, config.output_dir) if trace else None
         if trace_path:
-            console.print(f"[yellow][TRACE] 中断轨迹已保存至：{trace_path}[/yellow]")
+            status_line("Trace", f"中断轨迹已保存至 {trace_path}", WARNING)
         print_separator("-")
     except Exception as e:
-        console.print(f"\n[red][ERR] 发生错误：{e}[/red]")
+        status_line("错误", f"发生错误：{e}", ERROR)
         if logger:
             logger.exception("Research error")
         trace_path = save_trace(trace, config.output_dir) if trace else None
         if trace_path:
-            console.print(f"[yellow][TRACE] 错误轨迹已保存至：{trace_path}[/yellow]")
+            status_line("Trace", f"错误轨迹已保存至 {trace_path}", WARNING)
         print_separator("-")
 
 
@@ -577,20 +826,29 @@ def interactive_mode(config: CLIConfig) -> int:
 
                 elif choice == "2":
                     # 查看可用模型
-                    console.print("\n[bold]选择 LLM 提供商：[/bold]\n")
-                    console.print("  [cyan]1[/cyan] - DeepSeek")
-                    console.print("  [cyan]2[/cyan] - OpenAI")
-                    console.print("  [cyan]3[/cyan] - Claude")
-                    console.print("  [cyan]4[/cyan] - Gemini")
+                    providers = Table.grid(expand=True)
+                    providers.add_column("key", style=f"bold {ACCENT}", width=4, justify="center")
+                    providers.add_column("provider", style="white")
+                    providers.add_row("1", "DeepSeek")
+                    providers.add_row("2", "OpenAI")
+                    providers.add_row("3", "Claude")
+                    providers.add_row("4", "Gemini")
+                    console.print(Panel(
+                        providers,
+                        title=f"[bold {ACCENT}]选择 LLM 提供商[/]",
+                        border_style=SUBTLE,
+                        box=box.ROUNDED,
+                        padding=(1, 2),
+                    ))
 
-                    provider_choice = input("\n选择提供商 (1-4): ").strip()
+                    provider_choice = input("选择提供商 [1-4]: ").strip()
                     provider_map = {'1': 'deepseek', '2': 'openai', '3': 'claude', '4': 'gemini'}
                     provider = provider_map.get(provider_choice)
 
                     if provider:
                         show_models(provider)
                     else:
-                        console.print("[red][ERR] 无效的选择[/red]")
+                        status_line("错误", "无效的选择", ERROR)
 
                 elif choice == "3":
                     # 配置设置
@@ -602,23 +860,23 @@ def interactive_mode(config: CLIConfig) -> int:
 
                 elif choice == "5":
                     # 退出程序
-                    console.print("\n[yellow]感谢使用 SDYJ 深度研究系统！再见！[/yellow]\n")
+                    status_line("退出", "感谢使用 SDYJ 深度研究系统", WARNING)
                     return 0
 
                 else:
-                    console.print("[red][ERR] 无效的选择，请输入 1-5[/red]")
+                    status_line("错误", "无效的选择，请输入 1-5", ERROR)
 
             except KeyboardInterrupt:
-                console.print("\n\n[yellow]感谢使用！再见！[/yellow]\n")
+                status_line("退出", "感谢使用", WARNING)
                 return 0
             except EOFError:
-                console.print("\n\n[yellow]感谢使用！再见！[/yellow]\n")
+                status_line("退出", "感谢使用", WARNING)
                 return 0
             except Exception as e:
-                console.print(f"\n[red][ERR] 发生错误：{e}[/red]\n")
+                status_line("错误", f"发生错误：{e}", ERROR)
 
     except Exception as e:
-        console.print(f"\n[red][ERR] 系统错误：{e}[/red]\n")
+        status_line("错误", f"系统错误：{e}", ERROR)
         return 1
 
 

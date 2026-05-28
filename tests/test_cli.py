@@ -2,6 +2,7 @@ from SDYJ_Agents.cli.main import (
     _create_config_from_args,
     get_api_key_for_provider,
     parse_args,
+    summarize_report_for_cli,
 )
 
 
@@ -58,3 +59,26 @@ def test_get_api_key_accepts_provider_aliases(monkeypatch):
     monkeypatch.setenv("CLAUDE_API_KEY", "legacy-key")
 
     assert get_api_key_for_provider("claude") == "legacy-key"
+
+
+def test_report_summary_for_cli_is_concise():
+    report = """
+# 研究报告
+
+## 执行摘要
+北京大学历史悠久，是中国现代高等教育的重要代表。[E1]
+
+## 核心发现
+- 学校创办于 1898 年，早期与京师大学堂密切相关。[E1]
+- 五四运动等历史事件让北大拥有鲜明的思想文化传统。[E2]
+
+## 参考资料
+- [E1] source
+"""
+
+    summary = summarize_report_for_cli(report, "markdown", limit=3)
+
+    assert len(summary) == 3
+    assert "执行摘要" not in summary[0]
+    assert "[E1]" not in summary[0]
+    assert "北京大学历史悠久" in summary[0]
