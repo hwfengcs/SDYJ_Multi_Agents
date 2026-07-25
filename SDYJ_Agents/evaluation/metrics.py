@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Dict
 
-from ..utils.evidence import calculate_evidence_metrics
+from ..utils.evidence import (
+    calculate_evidence_metrics,
+    extract_body_citations,
+    valid_evidence_ids,
+)
 
 
 def _contains_term(text: str, term: str) -> bool:
@@ -32,11 +35,21 @@ def _plan_coverage(plan: Dict[str, Any], report: str, required_terms: list[str])
     return hits / len(required_terms)
 
 
-def _citation_id_coverage(report: str, evidence_count: int) -> float:
-    if evidence_count <= 0:
+def _citation_id_coverage(report: str, evidence_items: list[Dict[str, Any]]) -> float:
+    """Distinct VALID evidence ids cited in the report body / total evidence ids.
+
+    Fabricated ids and the auto-generated reference list are excluded so they
+    can no longer inflate coverage.
+    """
+    valid_ids = valid_evidence_ids(evidence_items)
+    if not valid_ids:
         return 0.0
-    cited = set(re.findall(r"\[E\d+\]", report or ""))
-    return len(cited) / evidence_count
+    cited = {
+        mention
+        for mention in extract_body_citations(report)
+        if mention[1:-1] in valid_ids
+    }
+    return len(cited) / len(valid_ids)
 
 
 def _field_coverage(items: list[Dict[str, Any]], required_fields: list[str]) -> float:
@@ -165,21 +178,29 @@ def evaluate_state(
             report,
             scenario.get("expected_sections", []),
         ),
-        "citation_id_coverage": _citation_id_coverage(report, len(evidence_items)),
+        "citation_id_coverage": _citation_id_coverage(report, evidence_items),
         "iteration_count": state.get("iteration_count", 0),
         "trace_completeness": trace_completeness(trace, scenario),
+        "degraded_event_count": len(state.get("degraded_events") or []),
+        "retries_total": sum(
+            int(call.get("retries") or 0)
+            for call in (trace or {}).get("llm_calls", [])
+        ),
         **evidence_metrics,
     }
 
-    # A compact score for dashboards. Keep the raw metrics visible for real review.
+    # A compact score for dashboards. Keep the raw metrics visible for real
+    # review. Faithfulness (LLM-judged) is deliberately NOT folded in — it
+    # reports as its own thresholded dimension so the blend cannot be gamed.
     metrics["overall_score"] = round(
-        0.2 * metrics["plan_coverage"]
-        + 0.16 * metrics["section_completeness"]
-        + 0.18 * min(metrics["citation_id_coverage"], 1.0)
-        + 0.14 * min(metrics["citation_density_per_1k_chars"] / 2.0, 1.0)
+        0.18 * metrics["plan_coverage"]
+        + 0.14 * metrics["section_completeness"]
+        + 0.16 * min(metrics["citation_id_coverage"], 1.0)
+        + 0.10 * min(metrics["citation_density_per_1k_chars"] / 2.0, 1.0)
         + 0.12 * metrics["tool_success_rate"]
-        + 0.1 * metrics["grounded_key_finding_rate"]
-        + 0.1 * metrics["trace_completeness"],
+        + 0.10 * metrics["grounded_key_finding_rate"]
+        + 0.10 * metrics["trace_completeness"]
+        + 0.10 * metrics["citation_validity_rate"],
         4,
     )
     return metrics

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterator
@@ -19,25 +20,52 @@ from .utils.tracing import (
     create_run_trace,
     merge_trace_state,
     record_decision,
+    replay_prompt_hash,
     save_trace,
 )
 from .workflow.graph import ResearchWorkflow
 
 
 class ReplayLLM(BaseLLM):
-    """LLM that replays recorded responses in call order."""
+    """LLM that replays recorded responses, matching by prompt hash first.
+
+    Hash matching (on the CURRENT_TIME-normalized prompt) keeps traces
+    replayable even when the number or order of LLM calls shifts between code
+    versions; hash-less legacy entries and unmatched prompts fall back to the
+    original sequential-order behavior.
+    """
 
     def __init__(self, recorded_calls: list[Dict[str, Any]], model: str = "replay-llm"):
         super().__init__(api_key="replay", model=model)
-        self.recorded_calls = list(recorded_calls)
-        self.index = 0
+        self.recorded_calls = [dict(call) for call in recorded_calls]
+        self._consumed = [False] * len(self.recorded_calls)
+        self._by_hash: Dict[str, deque] = {}
+        for index, call in enumerate(self.recorded_calls):
+            prompt_hash = call.get("prompt_hash")
+            if prompt_hash:
+                self._by_hash.setdefault(prompt_hash, deque()).append(index)
         self.last_usage = None
 
+    def _next_sequential(self) -> int | None:
+        for index, used in enumerate(self._consumed):
+            if not used:
+                return index
+        return None
+
     def generate(self, prompt: str, **kwargs) -> str:
-        if self.index >= len(self.recorded_calls):
+        index = None
+        queue = self._by_hash.get(replay_prompt_hash(prompt))
+        while queue:
+            candidate = queue.popleft()
+            if not self._consumed[candidate]:
+                index = candidate
+                break
+        if index is None:
+            index = self._next_sequential()
+        if index is None:
             raise RuntimeError("ReplayLLM exhausted recorded LLM calls")
-        call = self.recorded_calls[self.index]
-        self.index += 1
+        self._consumed[index] = True
+        call = self.recorded_calls[index]
         if call.get("error"):
             raise RuntimeError(call["error"])
         return call.get("response", "")
@@ -48,35 +76,59 @@ class ReplayLLM(BaseLLM):
 
 @dataclass
 class ReplaySearchTool:
-    """Search adapter that replays recorded tool results."""
+    """Search adapter that replays recorded tool results.
+
+    Entries are matched by exact query first, then by recorded order within
+    this tool's source, so reordered searches still find their results.
+    """
 
     source: str
     recorded_calls: list[Dict[str, Any]]
 
     def __post_init__(self) -> None:
-        self.index = 0
+        self._entries = [
+            dict(call)
+            for call in self.recorded_calls
+            if str(call.get("source", "")).lower() == self.source.lower()
+        ]
+        self._consumed = [False] * len(self._entries)
+        self._by_query: Dict[str, deque] = {}
+        for index, call in enumerate(self._entries):
+            self._by_query.setdefault(str(call.get("query", "")), deque()).append(index)
+
+    def _next_sequential(self) -> int | None:
+        for index, used in enumerate(self._consumed):
+            if not used:
+                return index
+        return None
 
     def search(self, query: str, **kwargs) -> Dict[str, Any]:
-        while self.index < len(self.recorded_calls):
-            call = self.recorded_calls[self.index]
-            self.index += 1
-            if str(call.get("source", "")).lower() != self.source.lower():
-                continue
-            result = copy.deepcopy(call.get("result") or {})
-            if not result:
-                result = {
-                    "query": query,
-                    "source": self.source,
-                    "results": [],
-                    "error": "recorded tool result missing",
-                }
-            return result
-        return {
-            "query": query,
-            "source": self.source,
-            "results": [],
-            "error": f"ReplaySearchTool exhausted recorded calls for {self.source}",
-        }
+        index = None
+        queue = self._by_query.get(str(query))
+        while queue:
+            candidate = queue.popleft()
+            if not self._consumed[candidate]:
+                index = candidate
+                break
+        if index is None:
+            index = self._next_sequential()
+        if index is None:
+            return {
+                "query": query,
+                "source": self.source,
+                "results": [],
+                "error": f"ReplaySearchTool exhausted recorded calls for {self.source}",
+            }
+        self._consumed[index] = True
+        result = copy.deepcopy(self._entries[index].get("result") or {})
+        if not result:
+            result = {
+                "query": query,
+                "source": self.source,
+                "results": [],
+                "error": "recorded tool result missing",
+            }
+        return result
 
 
 def can_deterministically_replay(trace: Dict[str, Any]) -> tuple[bool, str]:

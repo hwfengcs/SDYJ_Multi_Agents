@@ -8,7 +8,7 @@ English | [中文](README.md)
 
 SDYJ Multi Agents is a LangGraph-based multi-agent research framework. It turns an open-ended request into a controllable workflow: intent classification, planning, human review, multi-source retrieval, and synthesized Markdown, HTML, or JSON reports.
 
-The project focuses on practical agent operations: Trace v2 observability, deterministic replay, evidence-grounded reporting, benchmark gates, provider-agnostic LLM integration, tests, and CI.
+The project focuses on practical agent operations: Trace v2 observability, deterministic replay, durable checkpoints with resume, evidence-grounded reporting with citation validation, graceful degradation, benchmark gates, provider-agnostic LLM integration, tests, and CI.
 
 ## Highlights
 
@@ -16,10 +16,12 @@ The project focuses on practical agent operations: Trace v2 observability, deter
 - **Human-in-the-loop planning**: generated plans can be approved or revised before execution.
 - **Provider-agnostic LLM layer**: DeepSeek, OpenAI, Claude, and Gemini share one interface.
 - **Multi-source retrieval**: Tavily, arXiv, and an MCP adapter for external tools.
-- **Evidence-grounded reports**: retrieved results are normalized into `E1/E2/...` evidence items with URL deduplication, domain, query, date, and score metadata.
-- **Trace v2 observability**: every run records an event timeline with nodes, LLM calls, tool calls, routing decisions, latency, errors, report metrics, and replay cache.
-- **Deterministic replay**: replay a historical run from recorded LLM/tool I/O without calling real APIs.
-- **Practical benchmarks**: hard built-in agent scenarios support thresholds, `--fail-under`, summary comparison, trace completeness, and offline determinism checks.
+- **Evidence-grounded reports**: results are normalized into `E1/E2/...` evidence items; prompt evidence is budgeted by relevance; the LLM is instructed to cite `[E#]` inline (heuristics only backfill), and fabricated ids are stripped by post-generation validation.
+- **Graceful degradation**: transient LLM errors retry with exponential backoff; a failed task or report section degrades visibly instead of killing the run; every degradation is recorded in state, trace, and report metrics.
+- **Durable checkpoints & resume**: research runs write a per-run SQLite checkpoint; `resume <run-id>` continues a crashed or interrupted run — including a pending human-review gate.
+- **Trace v2 observability**: every run records an event timeline with nodes, LLM calls (incl. retry counts), tool calls, routing decisions, latency, errors, report metrics, and replay cache.
+- **Deterministic replay**: recorded LLM responses are matched by prompt hash first (sequential fallback for legacy traces), so replay survives call-order changes.
+- **Practical benchmarks**: hard built-in scenarios (incl. an LLM-failure-injection scenario) support thresholds, `--fail-under`, summary comparison, trace completeness, offline determinism checks, and a dual-track LLM-as-judge faithfulness score.
 - **Engineering-first repo**: Python packaging, CLI entry point, tests, CI, docs, and examples.
 
 ## Architecture
@@ -117,19 +119,20 @@ Run without a query to open the interactive menu:
 python main.py
 ```
 
-### 4. Trace / Replay
+### 4. Trace / Replay / Resume
 
-Runs write a bundle under `outputs/runs/<run-id>/` and keep a backward-compatible copy under `outputs/traces/<run-id>.json`:
+Runs write a bundle under `outputs/runs/<run-id>/` (trace, events, final or partial state, per-run sqlite checkpoint, report) and keep a backward-compatible copy under `outputs/traces/<run-id>.json`:
 
 ```bash
 python main.py inspect-run
 python main.py inspect-run <run-id> --timeline
 python main.py runs list
 python main.py replay <run-id>
+python main.py resume <run-id>       # continue a crashed/interrupted run
 python main.py diff-runs <run-a> <run-b>
 ```
 
-See [docs/trace-replay.md](docs/trace-replay.md).
+Crashed research runs persist `state.partial.json` and exit with code 4 (eval gates keep 2/3). See [docs/trace-replay.md](docs/trace-replay.md).
 
 ### 5. Benchmark
 
@@ -164,11 +167,11 @@ SDYJ_Agents/
   agents/       # Coordinator / Planner / Researcher / Rapporteur
   cli/          # argparse CLI and interactive menu
   llm/          # provider-agnostic LLM wrappers
-  prompts/      # Jinja prompt templates
+  prompts/      # Jinja prompt templates (with stable [PROMPT_ID] markers)
   tools/        # Tavily, arXiv, MCP adapters
-  workflow/     # LangGraph graph and state
-  utils/        # config, logging, evidence, tracing
-  evaluation/   # benchmark scenarios, metrics, runner
+  workflow/     # LangGraph graph, state, durable checkpoint, resume
+  utils/        # config, logging, evidence, tracing, retry policy
+  evaluation/   # benchmark scenarios, metrics, runner, LLM-as-judge
 docs/           # architecture, trace/replay, benchmark, roadmap
 examples/       # small reproducible examples
 tests/          # unit tests with fake LLM/search
@@ -199,6 +202,14 @@ ruff check SDYJ_Agents tests
 Unit tests use fake LLM and fake search implementations, so real API keys are not required.
 
 ## Roadmap
+
+v0.6 includes:
+
+- Citation-integrity pipeline: instructed citations + post-generation validation + validity metrics. Done.
+- Graceful degradation: transient-error retry, node/section-level fallbacks, partial-state persistence, nonzero crash exit codes. Done.
+- Durable SqliteSaver checkpoints and the `resume` command. Done.
+- Prompt-hash replay matching (legacy traces fall back to order). Done.
+- Dual-track LLM-as-judge faithfulness plus an LLM-failure-injection benchmark scenario. Done.
 
 v0.5 includes:
 

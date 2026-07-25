@@ -29,6 +29,7 @@ from rich.text import Text
 from ..evaluation import run_evaluation
 from ..evaluation.scenarios import list_scenarios
 from ..utils.config import load_config_from_env
+from ..utils.llm_retry import RetryPolicy
 from ..utils.logger import setup_logger
 from ..utils.tracing import (
     InstrumentedLLM,
@@ -38,6 +39,7 @@ from ..utils.tracing import (
     latest_trace_path,
     load_trace,
     merge_trace_state,
+    run_dir_for,
     save_trace,
 )
 from ..replay import can_deterministically_replay, run_deterministic_replay
@@ -46,7 +48,7 @@ from ..agents.coordinator import Coordinator
 from ..agents.planner import Planner
 from ..agents.researcher import Researcher
 from ..agents.rapporteur import Rapporteur
-from ..workflow.graph import ResearchWorkflow
+from ..workflow.graph import ResearchWorkflow, build_invoke_config, open_sqlite_checkpointer
 
 console = Console()
 error_console = Console(stderr=True)
@@ -588,8 +590,12 @@ def human_approval_callback(state: Dict[str, Any]) -> Tuple[bool, str]:
         return human_approval_callback(state)
 
 
-def execute_research(config: CLIConfig, query: str = None) -> None:
-    """执行研究任务"""
+def execute_research(config: CLIConfig, query: str = None) -> int:
+    """执行研究任务。
+
+    Returns an exit code: 0 success/interrupt, 1 empty query, 4 crashed run
+    (partial state + trace are persisted for `resume`/debugging).
+    """
     console.print(Panel(
         "输入一个开放式研究问题，系统会先生成计划，审批后再检索并生成报告。",
         title=f"[bold {ACCENT}]执行研究任务[/]",
@@ -598,13 +604,15 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
         padding=(1, 2),
     ))
     trace = None
+    workflow = None
+    current_state = None
 
     if not query:
         query = input("研究问题 > ").strip()
 
     if not query:
         status_line("错误", "研究问题不能为空", ERROR)
-        return
+        return 1
 
     logger = None
     try:
@@ -628,12 +636,20 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
 
         # Create LLM
         status_line("模型", f"初始化 {config.provider.upper()} / {config.model}")
+        llm_kwargs = {"temperature": env_cfg.llm.temperature}
+        if env_cfg.llm.max_tokens:
+            llm_kwargs["max_tokens"] = env_cfg.llm.max_tokens
         base_llm = LLMFactory.create_llm(
             provider=env_cfg.llm.provider,
             api_key=env_cfg.llm.api_key,
-            model=env_cfg.llm.model
+            model=env_cfg.llm.model,
+            **llm_kwargs,
         )
-        llm = InstrumentedLLM(base_llm, trace)
+        retry_policy = RetryPolicy(
+            max_retries=env_cfg.llm.max_retries,
+            base_delay=env_cfg.llm.retry_base_delay,
+        )
+        llm = InstrumentedLLM(base_llm, trace, retry_policy=retry_policy)
 
         # Create agents
         status_line("智能体", "初始化 Coordinator / Planner / Researcher / Rapporteur")
@@ -649,7 +665,20 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
 
         # Create workflow
         status_line("工作流", "装配 LangGraph 状态机")
-        workflow = ResearchWorkflow(coordinator, planner, researcher, rapporteur)
+        checkpointer = None
+        if os.getenv("SDYJ_DURABLE_CHECKPOINT", "1") != "0":
+            try:
+                db_path = run_dir_for(config.output_dir, trace["run_id"]) / "checkpoint.sqlite"
+                checkpointer = open_sqlite_checkpointer(db_path)
+            except ImportError:
+                status_line(
+                    "提示",
+                    "未安装 langgraph-checkpoint-sqlite，checkpoint 仅保存在内存",
+                    WARNING,
+                )
+        workflow = ResearchWorkflow(
+            coordinator, planner, researcher, rapporteur, checkpointer=checkpointer
+        )
 
         # Run workflow
         console.print(Panel(
@@ -665,8 +694,7 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
         last_render_key = None
 
         # Always use stream_interactive to handle interrupts properly
-        stream_iter = workflow.stream_interactive(
-            query,
+        stream_iter = workflow.stream_interactive(            query,
             config.max_iterations,
             auto_approve=config.auto_approve,
             human_approval_callback=human_approval_callback if not config.auto_approve else None,
@@ -777,6 +805,8 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
                 report_path=output_path,
                 trace_path=trace_path,
             ))
+            print_separator("-")
+            return 0
 
         elif current_state and current_state.get('simple_response'):
             # Simple query was handled, no need to show error
@@ -784,30 +814,73 @@ def execute_research(config: CLIConfig, query: str = None) -> None:
             trace_path = save_trace(trace, config.output_dir, final_state=current_state)
             if trace_path:
                 status_line("Trace", f"已保存至 {trace_path}", SUCCESS)
+            print_separator("-")
+            return 0
         else:
             status_line("错误", "研究未成功完成", ERROR)
             if current_state and isinstance(current_state, dict):
                 trace = merge_trace_state(trace, current_state.get("trace"))
-            trace_path = save_trace(trace, config.output_dir, final_state=current_state)
+            trace_path = save_trace(
+                trace,
+                config.output_dir,
+                final_state=current_state,
+                partial=True,
+            )
             if trace_path:
                 status_line("Trace", f"失败轨迹已保存至 {trace_path}", WARNING)
-
-        print_separator("-")
+            print_separator("-")
+            return 4
 
     except KeyboardInterrupt:
         status_line("中断", "任务已被用户中断", WARNING)
-        trace_path = save_trace(trace, config.output_dir) if trace else None
+        snapshot = _crash_state_snapshot(workflow, trace, config, current_state)
+        if snapshot and trace:
+            trace = merge_trace_state(trace, snapshot.get("trace"))
+        trace_path = (
+            save_trace(trace, config.output_dir, final_state=snapshot, partial=True)
+            if trace else None
+        )
         if trace_path:
             status_line("Trace", f"中断轨迹已保存至 {trace_path}", WARNING)
         print_separator("-")
+        return 0
     except Exception as e:
         status_line("错误", f"发生错误：{e}", ERROR)
         if logger:
             logger.exception("Research error")
-        trace_path = save_trace(trace, config.output_dir) if trace else None
+        snapshot = _crash_state_snapshot(workflow, trace, config, current_state)
+        if snapshot and trace:
+            trace = merge_trace_state(trace, snapshot.get("trace"))
+        trace_path = (
+            save_trace(trace, config.output_dir, final_state=snapshot, partial=True)
+            if trace else None
+        )
         if trace_path:
-            status_line("Trace", f"错误轨迹已保存至 {trace_path}", WARNING)
+            status_line("Trace", f"错误轨迹与部分状态已保存至 {trace_path}", WARNING)
         print_separator("-")
+        return 4
+    finally:
+        # Release the sqlite checkpoint handle: an open connection keeps the
+        # run directory locked on Windows.
+        if workflow is not None:
+            workflow.close()
+
+
+def _crash_state_snapshot(workflow, trace, config: CLIConfig, current_state):
+    """Best-effort state snapshot for crash-path persistence."""
+    snapshot = current_state if isinstance(current_state, dict) else None
+    try:
+        if workflow is not None and trace:
+            invoke_config = build_invoke_config(
+                trace.get("run_id", "1"),
+                config.max_iterations,
+            )
+            values = workflow.graph.get_state(invoke_config).values
+            if isinstance(values, dict) and values:
+                snapshot = values
+    except Exception:
+        pass
+    return snapshot
 
 
 def interactive_mode(config: CLIConfig) -> int:
@@ -881,13 +954,141 @@ def interactive_mode(config: CLIConfig) -> int:
 
 
 def run_single_task(config: CLIConfig, query: str) -> int:
-    """运行单个任务（命令行模式）"""
+    """运行单个任务（命令行模式）。
+
+    Exit codes: 0 success, 1 CLI error, 4 crashed/incomplete run (partial
+    state persisted). Eval keeps 2 (missing key) and 3 (gate failed).
+    """
     try:
-        execute_research(config, query)
-        return 0
+        return execute_research(config, query)
     except Exception as e:
         error_console.print(f"[red][ERR] 错误：{e}[/red]")
         return 1
+
+
+def resume_run_command(args) -> int:
+    """从 sqlite checkpoint 续跑一次中断的研究任务。"""
+    output_dir = args.output_dir
+    run_id = args.run_id
+    try:
+        trace = load_trace(run_id, output_dir)
+    except FileNotFoundError:
+        error_console.print(f"[red][ERR] 未找到 run {run_id} 的 trace[/red]")
+        return 1
+
+    db_path = run_dir_for(output_dir, run_id) / "checkpoint.sqlite"
+    if not db_path.exists():
+        error_console.print(f"[red][ERR] 未找到 checkpoint：{db_path}[/red]")
+        error_console.print("只有启用持久化 checkpoint 的 research run 支持 resume")
+        return 1
+
+    provider = trace.get("provider") or "deepseek"
+    if not get_api_key_for_provider(provider):
+        expected_envs = " 或 ".join(PROVIDER_API_KEY_ENVS.get(provider, ()))
+        error_console.print(f"[red][ERR] 缺少 API 密钥，请在 .env 中设置 {expected_envs}[/red]")
+        return 2
+
+    os.environ['LLM_PROVIDER'] = provider
+    env_cfg = load_config_from_env()
+    model = trace.get("model") or env_cfg.llm.model
+    max_iterations = args.max_iterations or (trace.get("config") or {}).get("max_iterations")
+
+    status_line("续跑", f"run {run_id} · {provider}/{model}")
+    trace["resumed_at"] = datetime.now().isoformat(timespec="seconds")
+
+    llm_kwargs = {"temperature": env_cfg.llm.temperature}
+    if env_cfg.llm.max_tokens:
+        llm_kwargs["max_tokens"] = env_cfg.llm.max_tokens
+    base_llm = LLMFactory.create_llm(
+        provider=provider,
+        api_key=env_cfg.llm.api_key,
+        model=model,
+        **llm_kwargs,
+    )
+    retry_policy = RetryPolicy(
+        max_retries=env_cfg.llm.max_retries,
+        base_delay=env_cfg.llm.retry_base_delay,
+    )
+    llm = InstrumentedLLM(base_llm, trace, retry_policy=retry_policy)
+
+    coordinator = Coordinator(llm)
+    planner = Planner(llm)
+    researcher = Researcher(
+        llm=llm,
+        tavily_api_key=env_cfg.search.tavily_api_key,
+        mcp_server_url=env_cfg.search.mcp_server_url,
+        mcp_api_key=env_cfg.search.mcp_api_key,
+    )
+    rapporteur = Rapporteur(llm)
+    workflow = ResearchWorkflow(
+        coordinator,
+        planner,
+        researcher,
+        rapporteur,
+        checkpointer=open_sqlite_checkpointer(db_path),
+    )
+
+    final_state = None
+    last_step = None
+    try:
+        for update in workflow.resume_interactive(
+            thread_id=run_id,
+            max_iterations=max_iterations,
+            auto_approve=args.auto_approve,
+            human_approval_callback=None if args.auto_approve else human_approval_callback,
+            trace=trace,
+        ):
+            for value in update.values():
+                if isinstance(value, dict):
+                    final_state = value
+                    step = value.get("current_step")
+                    if step and step != last_step:
+                        status_line("进度", str(step))
+                        last_step = step
+
+        if final_state and final_state.get("final_report"):
+            report = final_state["final_report"]
+            output_format = final_state.get("output_format", "markdown")
+            extension = (
+                "html" if output_format == "html"
+                else "json" if output_format == "json"
+                else "md"
+            )
+            report_dir = Path(output_dir)
+            report_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            report_path = report_dir / f"research_report_{timestamp}.{extension}"
+            rapporteur.save_report(report, str(report_path))
+            merged = merge_trace_state(trace, final_state.get("trace"))
+            trace_path = save_trace(
+                merged,
+                output_dir,
+                final_state=final_state,
+                report=report,
+                report_extension=extension,
+            )
+            status_line("完成", f"报告已保存至 {report_path}", SUCCESS)
+            if trace_path:
+                status_line("Trace", f"已更新 {trace_path}", SUCCESS)
+            return 0
+
+        status_line("错误", "续跑未生成报告", ERROR)
+        merged = merge_trace_state(trace, (final_state or {}).get("trace"))
+        save_trace(merged, output_dir, final_state=final_state, partial=True)
+        return 4
+    except KeyboardInterrupt:
+        status_line("中断", "续跑已中断，可再次 resume", WARNING)
+        save_trace(trace, output_dir, final_state=final_state, partial=True)
+        return 0
+    except ValueError as e:
+        error_console.print(f"[red][ERR] {e}[/red]")
+        return 1
+    except Exception as e:
+        status_line("错误", f"续跑失败：{e}", ERROR)
+        save_trace(trace, output_dir, final_state=final_state, partial=True)
+        return 4
+    finally:
+        workflow.close()
 
 
 def inspect_run(
@@ -1171,6 +1372,8 @@ def execute_evaluation(args: argparse.Namespace) -> int:
         table.add_column("Score", justify="right")
         table.add_column("Plan", justify="right")
         table.add_column("Citations", justify="right")
+        table.add_column("Validity", justify="right")
+        table.add_column("Faithful", justify="right")
         table.add_column("Tool OK", justify="right")
         table.add_column("Trace")
         for item in summary["results"]:
@@ -1180,6 +1383,8 @@ def execute_evaluation(args: argparse.Namespace) -> int:
                 f"{metrics['overall_score']:.4f}",
                 f"{metrics['plan_coverage']:.2f}",
                 f"{metrics['citation_id_coverage']:.2f}",
+                f"{metrics.get('citation_validity_rate', 0.0):.2f}",
+                f"{metrics.get('faithfulness_score', 0.0):.2f}",
                 f"{metrics['tool_success_rate']:.2f}",
                 item["run_id"],
             )
@@ -1339,6 +1544,29 @@ def parse_args(argv: Any) -> argparse.Namespace:
         )
         args = parser.parse_args(argv[1:])
         args.command = "replay"
+        return args
+
+    if argv and argv[0] == "resume":
+        parser = argparse.ArgumentParser(description="从 checkpoint 续跑一次中断的研究任务")
+        parser.add_argument("run_id", help="要续跑的 run_id")
+        parser.add_argument(
+            "--output-dir",
+            default=saved_config.get("output_dir", "./outputs"),
+            help="输出目录（默认：./outputs）",
+        )
+        parser.add_argument(
+            "--auto-approve",
+            action="store_true",
+            help="自动批准待审批的研究计划",
+        )
+        parser.add_argument(
+            "--max-iterations",
+            type=int,
+            default=None,
+            help="覆盖迭代上限（默认沿用原 run 配置）",
+        )
+        args = parser.parse_args(argv[1:])
+        args.command = "resume"
         return args
 
     if argv and argv[0] == "diff-runs":
@@ -1516,6 +1744,9 @@ def main(argv: Any = None) -> int:
 
     if args.command == "replay":
         return replay_run(args.run_id, args.output_dir)
+
+    if args.command == "resume":
+        return resume_run_command(args)
 
     if args.command == "diff-runs":
         return diff_runs(args.left, args.right, args.output_dir, as_json=args.json)

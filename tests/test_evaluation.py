@@ -72,3 +72,37 @@ def test_apply_thresholds_marks_failure():
 
     assert result["passed"] is False
     assert result["failed_thresholds"][0]["actual"] == 0.5
+
+
+def test_offline_evaluation_reports_faithfulness_dimension(tmp_path):
+    summary = run_evaluation(
+        live=False,
+        max_scenarios=1,
+        output_dir=str(tmp_path),
+        max_iterations=2,
+    )
+
+    metrics = summary["results"][0]["metrics"]
+    assert metrics["judged_claim_count"] > 0
+    assert metrics["faithfulness_score"] >= 0.70
+    assert metrics["citation_precision"] > 0
+    assert metrics["citation_validity_rate"] == 1.0
+    assert metrics["invalid_citation_count"] == 0
+
+
+def test_llm_failure_scenario_survives_with_retry_and_degradation(tmp_path):
+    summary = run_evaluation(
+        live=False,
+        scenario_ids=["llm_failure_recovery_hard"],
+        output_dir=str(tmp_path),
+        max_iterations=2,
+    )
+
+    result = summary["results"][0]
+    metrics = result["metrics"]
+    assert result["passed"], result["failed_thresholds"]
+    assert result["report_path"]  # the degraded report still shipped
+    assert metrics["retries_total"] >= 1  # transient summarize failure retried
+    assert metrics["degraded_event_count"] >= 1  # permanent conclusion failure degraded
+    assert metrics["tool_success_rate"] >= 0.5  # forced arxiv outage isolated
+

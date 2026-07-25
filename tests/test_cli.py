@@ -31,6 +31,7 @@ def test_parse_utility_commands_without_api_key():
     eval_args = parse_args(["eval", "--max-scenarios", "1"])
     benchmark_args = parse_args(["benchmark", "run", "--fail-under", "0.7", "--determinism-repeats", "2"])
     replay_args = parse_args(["replay", "abc123"])
+    resume_args = parse_args(["resume", "abc123", "--auto-approve"])
     diff_args = parse_args(["diff-runs", "run-a", "run-b", "--json"])
     runs_args = parse_args(["runs", "list", "--limit", "5"])
 
@@ -47,6 +48,9 @@ def test_parse_utility_commands_without_api_key():
     assert benchmark_args.fail_under == 0.7
     assert benchmark_args.determinism_repeats == 2
     assert replay_args.command == "replay"
+    assert resume_args.command == "resume"
+    assert resume_args.run_id == "abc123"
+    assert resume_args.auto_approve is True
     assert diff_args.command == "diff-runs"
     assert diff_args.json is True
     assert runs_args.command == "runs"

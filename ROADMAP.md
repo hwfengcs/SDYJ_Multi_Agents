@@ -43,12 +43,27 @@ benchmarks.
 - [x] Add trace completeness as a benchmark metric.
 - [x] Add JSON report output for downstream automation.
 
-## v0.6 - Extensibility and Runtime Reliability
+## v0.6 - Citation Integrity, Fault Tolerance, and Accuracy Evals
+
+- [x] Budget prompt evidence by relevance + char budget instead of insertion order.
+- [x] Instruct inline `[E#]` citations in prompts; heuristic backfill only for uncited bullets.
+- [x] Validate citations post-generation: fabricated ids are stripped and metered (`citation_validity_rate`).
+- [x] Count citation coverage on the report body only (reference list excluded).
+- [x] Stable `[PROMPT_ID]` markers with a FakeEvalLLM lockstep contract test.
+- [x] Retry transient LLM failures with exponential backoff inside `InstrumentedLLM` (one llm_call per logical call).
+- [x] Graceful degradation: failed tasks skip, failed report sections ship placeholders, degradations recorded everywhere.
+- [x] HTTP timeouts for Tavily/arXiv/MCP; `recursion_limit` scales with `max_iterations`.
+- [x] Durable per-run SqliteSaver checkpoints and `sdyj resume <run-id>`.
+- [x] Crash paths persist partial state + trace and exit nonzero.
+- [x] Replay matches recorded LLM calls by normalized prompt hash (legacy traces fall back to order).
+- [x] Dual-track LLM-as-judge faithfulness scoring (`faithfulness_score`, `citation_precision`).
+- [x] `llm_failure_recovery_hard` benchmark scenario gating on visible retries and degradations.
+
+## v0.7 - Extensibility and Runtime Reliability
 
 - [ ] Make the MCP adapter closer to the official MCP tool model.
 - [ ] Add plugin-style registration for retrieval tools.
 - [ ] Add provider capability metadata such as context window and structured output support.
-- [ ] Add retry/timeout policy objects for each retrieval source.
 - [ ] Add partial replay from a selected workflow node.
 - [ ] Add external benchmark suite loading from JSON/YAML files.
 - [ ] Add OpenTelemetry export for trace events.

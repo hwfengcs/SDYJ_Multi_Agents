@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-SDYJ Multi Agents 是一个基于 LangGraph 的多智能体研究框架。它把开放式研究任务拆成“意图识别 -> 计划生成 -> 人工审核 -> 多源检索 -> 综合报告”的可控工作流，并重点提供 Trace v2、deterministic replay、证据追踪和可作为 CI gate 的 benchmark。
+SDYJ Multi Agents 是一个基于 LangGraph 的多智能体研究框架。它把开放式研究任务拆成“意图识别 -> 计划生成 -> 人工审核 -> 多源检索 -> 综合报告”的可控工作流，并重点提供 Trace v2、deterministic replay、断点续跑、证据追踪、引用校验和可作为 CI gate 的 benchmark。
 
 ## 为什么值得关注
 
@@ -14,10 +14,12 @@ SDYJ Multi Agents 是一个基于 LangGraph 的多智能体研究框架。它把
 - **Human-in-the-loop**：执行研究前先展示计划，用户可批准或反馈修改。
 - **多模型适配**：支持 DeepSeek、OpenAI、Claude、Gemini，统一 LLM 抽象层。
 - **多源检索**：集成 Tavily、arXiv，并预留 MCP 工具适配接口。
-- **证据驱动报告**：检索结果会规范化为 `E1/E2/...` 证据项，自动去重并保留 URL、domain、query、发布时间和相关性分数。
-- **Trace v2 可观测性**：每次运行都会生成事件时间线，记录节点、LLM 调用、工具调用、routing decision、latency、错误、报告指标和 replay cache。
-- **Deterministic Replay**：可用已记录的 LLM/tool I/O 重放一次历史运行，复现失败路径，不调用真实 API。
-- **实用 Benchmark**：内置困难 Agent 场景，支持阈值 gate、summary compare、trace completeness 和离线确定性检查。
+- **证据驱动报告**：检索结果规范化为 `E1/E2/...` 证据项；进入 prompt 的证据按相关性预算裁剪；LLM 被要求主动引用 `[E#]`，启发式补引仅作兜底；交付前校验并剔除编造引用。
+- **容错降级**：瞬时 LLM 错误指数退避重试；单个任务/报告章节失败只降级不中断；每次降级都记录在 state、trace 和报告指标里。
+- **断点续跑**：每次 research 默认写入 per-run SQLite checkpoint，崩溃或中断后 `resume <run-id>` 从最后一步继续（含待审批状态）。
+- **Trace v2 可观测性**：每次运行都会生成事件时间线，记录节点、LLM 调用（含重试次数）、工具调用、routing decision、latency、错误、报告指标和 replay cache。
+- **Deterministic Replay**：按 prompt hash 优先匹配已记录的 LLM/tool I/O 重放历史运行，调用顺序变化也能兼容，旧 trace 回退按序匹配。
+- **实用 Benchmark**：内置困难 Agent 场景（含 LLM 故障注入场景），支持阈值 gate、summary compare、trace completeness、离线确定性检查，以及双轨 LLM-as-judge 忠实度评分。
 - **可复现工程**：提供 Python 包配置、CLI 入口、单元测试、CI、示例输出和架构文档。
 
 ## 架构概览
@@ -115,7 +117,7 @@ python main.py research \
 python main.py
 ```
 
-### 4. Trace / Replay
+### 4. Trace / Replay / Resume
 
 每次研究和评测都会写入 run bundle：
 
@@ -123,7 +125,8 @@ python main.py
 outputs/runs/<run-id>/
   trace.json
   events.jsonl
-  state.final.json
+  state.final.json        # 崩溃/中断时为 state.partial.json
+  checkpoint.sqlite       # research 运行的持久化 checkpoint
   report.md|html|json
 ```
 
@@ -134,14 +137,15 @@ python main.py inspect-run
 python main.py inspect-run <run-id> --timeline
 python main.py runs list
 python main.py replay <run-id>
+python main.py resume <run-id>        # 崩溃/中断后从 checkpoint 续跑
 python main.py diff-runs <run-a> <run-b>
 ```
 
-详见 [docs/trace-replay.md](docs/trace-replay.md)。
+研究运行崩溃时会保存部分状态并返回退出码 4（eval 的 gate 失败仍是 3）。详见 [docs/trace-replay.md](docs/trace-replay.md)。
 
 ### 5. Benchmark
 
-离线 benchmark 不需要真实 API key，使用固定困难场景和 canned evidence，适合 CI 和回归测试：
+离线 benchmark 不需要真实 API key，使用固定困难场景（含 LLM 故障注入场景 `llm_failure_recovery_hard`）和 canned evidence，faithfulness judge 走 canned verdict，适合 CI 和回归测试：
 
 ```bash
 python main.py list-scenarios
@@ -172,11 +176,11 @@ SDYJ_Agents/
   agents/       # Coordinator / Planner / Researcher / Rapporteur
   cli/          # argparse CLI and interactive menu
   llm/          # provider-agnostic LLM wrappers
-  prompts/      # Jinja prompt templates
+  prompts/      # Jinja prompt templates (with stable [PROMPT_ID] markers)
   tools/        # Tavily, arXiv, MCP adapters
-  workflow/     # LangGraph graph and state
-  utils/        # config, logging, evidence, tracing
-  evaluation/   # benchmark scenarios, metrics, runner
+  workflow/     # LangGraph graph, state, durable checkpoint, resume
+  utils/        # config, logging, evidence, tracing, retry policy
+  evaluation/   # benchmark scenarios, metrics, runner, LLM-as-judge
 docs/           # architecture, trace/replay, benchmark, roadmap
 examples/       # small reproducible examples
 tests/          # unit tests with fake LLM/search
@@ -207,6 +211,14 @@ ruff check SDYJ_Agents tests
 测试默认使用 fake LLM 和 fake search，不需要真实 API key。
 
 ## Roadmap
+
+v0.6 已完成：
+
+- 引用完整性管道：LLM 主动引用 + 事后校验 + 引用有效性指标。✅
+- 容错降级：瞬时错误重试、节点/章节级降级、部分状态保存与非零退出码。✅
+- SqliteSaver 持久化 checkpoint 与 `resume` 命令。✅
+- Replay 按 prompt hash 匹配（兼容旧 trace）。✅
+- LLM-as-judge 忠实度评分（双轨）与 LLM 故障注入 benchmark 场景。✅
 
 v0.5 已完成：
 

@@ -14,6 +14,7 @@ from ..agents.researcher import Researcher
 from ..llm.base import BaseLLM
 from ..llm.factory import LLMFactory
 from ..utils.config import load_config_from_env
+from ..utils.llm_retry import RetryPolicy, TransientLLMError
 from ..utils.tracing import (
     InstrumentedLLM,
     create_run_trace,
@@ -22,6 +23,7 @@ from ..utils.tracing import (
     save_trace,
 )
 from ..workflow.graph import ResearchWorkflow
+from .judge import run_faithfulness_judge
 from .metrics import apply_thresholds, evaluate_state
 from .scenarios import HARD_SCENARIOS, get_scenario
 
@@ -56,85 +58,148 @@ class CannedSearchTool:
         }
 
 
-class FakeEvalLLM(BaseLLM):
-    """Deterministic LLM used for offline eval smoke tests."""
+def _build_canned_responses() -> Dict[str, str]:
+    """Canned responses keyed by the stable ``[PROMPT_ID: ...]`` template marker.
 
-    def __init__(self):
+    Keeping the mapping marker-based (instead of matching template wording)
+    lets prompt text evolve without silently changing offline benchmarks;
+    tests/test_prompt_markers.py enforces the pairing.
+    """
+    plan_json = json.dumps(
+        {
+            "research_goal": "Evaluate a complex agent system with traceable evidence",
+            "sub_tasks": [
+                {
+                    "task_id": 1,
+                    "description": "Collect evidence for agent evaluation metrics",
+                    "search_queries": ["agent evaluation trace evidence citation latency cost"],
+                    "sources": ["tavily", "arxiv"],
+                    "priority": 1,
+                },
+                {
+                    "task_id": 2,
+                    "description": "Analyze tool failure, retry, fallback, and human approval",
+                    "search_queries": ["tool timeout retry duplicate dedup fallback human review"],
+                    "sources": ["tavily", "arxiv"],
+                    "priority": 2,
+                },
+            ],
+            "completion_criteria": (
+                "Report must cover evidence, citation grounding, trace, latency, cost, "
+                "tool reliability, ablation, and human control."
+            ),
+            "estimated_iterations": 2,
+        }
+    )
+    themes_json = json.dumps(
+        {
+            "themes": [
+                {
+                    "name": "评测指标体系",
+                    "key_points": [
+                        "Agent 评测应覆盖 evidence、citation、trace、latency、cost 与 tool success，而不是只看最终答案。[E1]",
+                        "Ablation study 可以比较人工审批、去重、重试和证据引用对整体可靠性的贡献。[E2]",
+                    ],
+                },
+                {
+                    "name": "工具可靠性治理",
+                    "key_points": [
+                        "工具 timeout、duplicate URL、空结果和低质量来源都应进入 trace，并由 fallback 策略处理。[E3]",
+                        "Human review 适合放在高成本检索或不可逆工具调用之前，用来降低错误计划的执行成本。[E2]",
+                    ],
+                },
+            ]
+        },
+        ensure_ascii=False,
+    )
+    html_report = (
+        "<!DOCTYPE html>\n"
+        '<html lang="zh-CN">\n'
+        '<head><meta charset="UTF-8"><title>研究报告</title></head>\n'
+        "<body>\n"
+        "<h1>研究报告</h1>\n"
+        "<section><h2>执行摘要</h2><p>评测方案覆盖计划、检索、证据与审批环节 [E1]。</p></section>\n"
+        "<section><h2>核心发现</h2><ul><li>评测应覆盖 evidence 与 trace [E1]</li>"
+        "<li>Human review 控制高成本检索 [E2]</li></ul></section>\n"
+        "<section><h2>深度分析</h2><p>以 trace 为主线串联调用与证据 [E1][E2]。</p></section>\n"
+        "<section><h2>来源概览</h2><p>见参考资料。</p></section>\n"
+        "<section><h2>参考资料</h2><ol><li>[E1]</li><li>[E2]</li></ol></section>\n"
+        "<section><h2>结论</h2><p>以 trace 驱动评测，人工审批作为控制阀。</p></section>\n"
+        "</body>\n"
+        "</html>"
+    )
+    return {
+        "[PROMPT_ID: coordinator_classify_query]": "RESEARCH",
+        "[PROMPT_ID: planner_create_plan]": plan_json,
+        "[PROMPT_ID: planner_modify_plan]": plan_json,
+        "[PROMPT_ID: planner_evaluate_context]": "YES",
+        "[PROMPT_ID: rapporteur_summarize]": (
+            "本评测方案将研究型 Agent 拆解为计划、检索、证据归一化、报告合成和人工审批五个环节 [E1]。"
+            "核心指标包括 evidence coverage、citation density、tool success rate、latency、cost、"
+            "trace completeness 和 ablation gain [E2]。"
+        ),
+        "[PROMPT_ID: rapporteur_organize_info]": themes_json,
+        "[PROMPT_ID: rapporteur_synthesized_analysis]": (
+            "### 评测设计\n"
+            "应以 trace 为主线，把每个 LLM 调用、工具调用、错误和证据项串起来 [E1]。"
+            "Ablation study 分别关闭人工审批、URL 去重、失败恢复和引用约束，比较成功率、成本与延迟变化 [E2]。\n\n"
+            "### 上线门槛\n"
+            "建议设置 citation coverage、tool success rate、latency SLO 和人工复核通过率阈值 [E3]。"
+        ),
+        "[PROMPT_ID: rapporteur_conclusion]": (
+            "Agent 上线前需要同时证明答案质量、证据可靠性和工程可观测性。"
+            "建议以 trace 驱动评测，用 ablation 验证关键机制，并把人工审批作为高风险任务的控制阀。"
+        ),
+        "[PROMPT_ID: rapporteur_generate_html]": html_report,
+        "[PROMPT_ID: judge_faithfulness]": json.dumps(
+            {
+                "default_verdict": "supported",
+                "verdicts": [
+                    {
+                        "claim_index": 1,
+                        "verdict": "partial",
+                        "reason": "canned partial verdict for deterministic offline scoring",
+                    }
+                ],
+            }
+        ),
+    }
+
+
+class FakeEvalLLM(BaseLLM):
+    """Deterministic LLM used for offline eval smoke tests.
+
+    ``failures`` injects per-marker exceptions (transient or permanent) to
+    exercise the retry and graceful-degradation paths inside benchmarks.
+    """
+
+    def __init__(self, failures: Optional[List[Dict[str, Any]]] = None):
         super().__init__(api_key="fake", model="fake-eval-llm")
         self.last_usage = None
+        self.responses = _build_canned_responses()
+        self.failures = [
+            {
+                "marker": spec["marker"],
+                "remaining": int(spec.get("fail_times", 1)),
+                "transient": bool(spec.get("transient", True)),
+            }
+            for spec in (failures or [])
+        ]
 
     def generate(self, prompt: str, **kwargs) -> str:
-        if "请将查询分类为" in prompt:
-            return "RESEARCH"
-        if "Create a structured research plan" in prompt:
-            return json.dumps(
-                {
-                    "research_goal": "Evaluate a complex agent system with traceable evidence",
-                    "sub_tasks": [
-                        {
-                            "task_id": 1,
-                            "description": "Collect evidence for agent evaluation metrics",
-                            "search_queries": ["agent evaluation trace evidence citation latency cost"],
-                            "sources": ["tavily", "arxiv"],
-                            "priority": 1,
-                        },
-                        {
-                            "task_id": 2,
-                            "description": "Analyze tool failure, retry, fallback, and human approval",
-                            "search_queries": ["tool timeout retry duplicate dedup fallback human review"],
-                            "sources": ["tavily", "arxiv"],
-                            "priority": 2,
-                        },
-                    ],
-                    "completion_criteria": (
-                        "Report must cover evidence, citation grounding, trace, latency, cost, "
-                        "tool reliability, ablation, and human control."
-                    ),
-                    "estimated_iterations": 2,
-                }
-            )
-        if "Evaluate whether the gathered research context is sufficient" in prompt:
-            return "YES"
-        if "必须严格按照以下JSON格式输出" in prompt:
-            return json.dumps(
-                {
-                    "themes": [
-                        {
-                            "name": "评测指标体系",
-                            "key_points": [
-                                "Agent 评测应覆盖 evidence、citation、trace、latency、cost 与 tool success，而不是只看最终答案。",
-                                "Ablation study 可以比较人工审批、去重、重试和证据引用对整体可靠性的贡献。",
-                            ],
-                        },
-                        {
-                            "name": "工具可靠性治理",
-                            "key_points": [
-                                "工具 timeout、duplicate URL、空结果和低质量来源都应进入 trace，并由 fallback 策略处理。",
-                                "Human review 适合放在高成本检索或不可逆工具调用之前，用来降低错误计划的执行成本。",
-                            ],
-                        },
-                    ]
-                }
-            )
-        if "执行摘要" in prompt:
-            return (
-                "本评测方案将研究型 Agent 拆解为计划、检索、证据归一化、报告合成和人工审批五个环节。"
-                "核心指标包括 evidence coverage、citation density、tool success rate、latency、cost、trace completeness "
-                "和 ablation gain。"
-            )
-        if "深度整合分析" in prompt or "深度分析框架" in prompt:
-            return (
-                "### 评测设计\n"
-                "应以 trace 为主线，把每个 LLM 调用、工具调用、错误和证据项串起来。"
-                "Ablation study 分别关闭人工审批、URL 去重、失败恢复和引用约束，比较成功率、成本与延迟变化。\n\n"
-                "### 上线门槛\n"
-                "建议设置 citation coverage、tool success rate、latency SLO 和人工复核通过率阈值。"
-            )
-        if "结论框架" in prompt:
-            return (
-                "Agent 上线前需要同时证明答案质量、证据可靠性和工程可观测性。"
-                "建议以 trace 驱动评测，用 ablation 验证关键机制，并把人工审批作为高风险任务的控制阀。"
-            )
+        for spec in self.failures:
+            if spec["remaining"] > 0 and spec["marker"] in prompt:
+                spec["remaining"] -= 1
+                if spec["transient"]:
+                    raise TransientLLMError(
+                        f"injected transient failure for {spec['marker']}"
+                    )
+                raise RuntimeError(
+                    f"injected permanent failure (invalid request) for {spec['marker']}"
+                )
+        for marker, response in self.responses.items():
+            if marker in prompt:
+                return response
         return "YES"
 
     def stream_generate(self, prompt: str, **kwargs):
@@ -151,19 +216,37 @@ def _select_scenarios(scenario_ids: Optional[Iterable[str]], max_scenarios: Opti
     return selected
 
 
-def _create_llm(live: bool, provider: str, model: Optional[str], trace: Dict[str, Any]) -> BaseLLM:
+def _create_llm(
+    live: bool,
+    provider: str,
+    model: Optional[str],
+    trace: Dict[str, Any],
+    scenario: Optional[Dict[str, Any]] = None,
+) -> BaseLLM:
     if not live:
-        return InstrumentedLLM(FakeEvalLLM(), trace)
+        # Zero-delay retries keep offline fault-injection scenarios fast while
+        # still exercising the production retry path.
+        offline_policy = RetryPolicy(max_retries=2, base_delay=0.0)
+        failures = (scenario or {}).get("llm_failures")
+        return InstrumentedLLM(FakeEvalLLM(failures=failures), trace, retry_policy=offline_policy)
 
     env_cfg = load_config_from_env()
     provider = provider or env_cfg.llm.provider
     model = model or env_cfg.llm.model
+    llm_kwargs = {"temperature": env_cfg.llm.temperature}
+    if env_cfg.llm.max_tokens:
+        llm_kwargs["max_tokens"] = env_cfg.llm.max_tokens
     llm = LLMFactory.create_llm(
         provider=provider,
         api_key=env_cfg.llm.api_key,
         model=model,
+        **llm_kwargs,
     )
-    return InstrumentedLLM(llm, trace)
+    retry_policy = RetryPolicy(
+        max_retries=env_cfg.llm.max_retries,
+        base_delay=env_cfg.llm.retry_base_delay,
+    )
+    return InstrumentedLLM(llm, trace, retry_policy=retry_policy)
 
 
 def _run_one_scenario(
@@ -184,7 +267,7 @@ def _run_one_scenario(
         mode="eval",
         scenario_id=scenario["id"],
     )
-    llm = _create_llm(live=live, provider=provider, model=model, trace=trace)
+    llm = _create_llm(live=live, provider=provider, model=model, trace=trace, scenario=scenario)
 
     coordinator = Coordinator(llm)
     planner = Planner(llm)
@@ -219,6 +302,10 @@ def _run_one_scenario(
 
     trace = merge_trace_state(trace, final_state.get("trace"))
     metrics = evaluate_state(final_state, scenario, trace=trace)
+    # The judge runs AFTER evaluate_state (its llm_call appends at trace end,
+    # never consumed by workflow replay) and reports as its own dimension —
+    # deliberately kept out of overall_score.
+    metrics.update(_run_judge(final_state, llm, trace))
     threshold_result = apply_thresholds(metrics, scenario, threshold_overrides)
     trace.setdefault("metrics", {}).update(metrics)
     trace.setdefault("metrics", {})["passed"] = threshold_result["passed"]
@@ -247,6 +334,28 @@ def _run_one_scenario(
     }
 
 
+def _run_judge(
+    final_state: Dict[str, Any],
+    llm: BaseLLM,
+    trace: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Run the faithfulness judge, degrading to zero scores on failure."""
+    try:
+        return run_faithfulness_judge(
+            final_state.get("final_report") or "",
+            final_state.get("evidence_items") or [],
+            llm,
+        )
+    except Exception as exc:
+        trace.setdefault("errors", []).append({"where": "judge", "error": str(exc)})
+        return {
+            "judged_claim_count": 0,
+            "faithfulness_score": 0.0,
+            "citation_precision": 0.0,
+            "judge_verdicts": [],
+        }
+
+
 def _stable_result_fingerprint(result: Dict[str, Any]) -> Dict[str, Any]:
     """Build a deterministic fingerprint for repeated offline benchmark runs."""
     metrics = result.get("metrics") or {}
@@ -255,11 +364,17 @@ def _stable_result_fingerprint(result: Dict[str, Any]) -> Dict[str, Any]:
         "plan_coverage",
         "section_completeness",
         "citation_id_coverage",
+        "citation_validity_rate",
+        "invalid_citation_count",
         "evidence_count",
         "citation_count",
         "tool_success_rate",
         "grounded_key_finding_rate",
         "trace_completeness",
+        "faithfulness_score",
+        "citation_precision",
+        "degraded_event_count",
+        "retries_total",
         "overall_score",
     ]
     return {

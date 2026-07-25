@@ -12,7 +12,14 @@ DEFAULT_THRESHOLDS = {
     "overall_score": 0.72,
     "plan_coverage": 0.70,
     "section_completeness": 0.80,
-    "citation_id_coverage": 0.70,
+    # Coverage counts only report-body citations (the auto-generated reference
+    # list is excluded), so partial coverage of a large evidence pool is the
+    # expected healthy behavior.
+    "citation_id_coverage": 0.55,
+    "citation_validity_rate": 0.95,
+    # LLM-judged, dual-track (canned verdict offline, real model with --live).
+    # Reported as its own dimension, deliberately not part of overall_score.
+    "faithfulness_score": 0.70,
     "tool_success_rate": 0.65,
     "trace_completeness": 0.80,
 }
@@ -277,6 +284,98 @@ HARD_SCENARIOS: List[Scenario] = [
                     "metadata": {"published": "2026-04-05T00:00:00"},
                 }
             ],
+        },
+    },
+    {
+        "id": "llm_failure_recovery_hard",
+        "title": "LLM failure retry and graceful degradation",
+        "query": (
+            "评估一个多智能体研究系统在 LLM API 间歇性超时、部分调用永久失败时的容错能力。"
+            "要求验证重试策略、降级输出、以及故障后报告仍然可交付且引用可追溯。"
+        ),
+        "required_terms": [
+            "timeout",
+            "retry",
+            "fallback",
+            "citation",
+            "trace",
+            "human",
+            "evidence",
+            "cost",
+        ],
+        "expected_sections": ["执行摘要", "核心发现", "深度分析", "来源概览", "参考资料", "结论"],
+        "thresholds": {
+            **DEFAULT_THRESHOLDS,
+            # One arxiv batch is force-failed: 1 of 2 batches succeeds.
+            "tool_success_rate": 0.50,
+            # The gate REQUIRES visible resilience: at least one recorded
+            # retry and at least one recorded degradation. A regression that
+            # stops recording either fails the scenario.
+            "retries_total": 1,
+            "degraded_event_count": 1,
+        },
+        "expected_trace": DEFAULT_EXPECTED_TRACE,
+        # Injected LLM failures (offline FakeEvalLLM only):
+        # - the summarize call fails once transiently -> retry succeeds;
+        # - the conclusion call fails permanently -> section degrades to a
+        #   placeholder while the report still ships.
+        "llm_failures": [
+            {
+                "marker": "[PROMPT_ID: rapporteur_summarize]",
+                "fail_times": 1,
+                "transient": True,
+            },
+            {
+                "marker": "[PROMPT_ID: rapporteur_conclusion]",
+                "fail_times": 99,
+                "transient": False,
+            },
+        ],
+        "canned_results": {
+            "tavily": [
+                {
+                    "title": "Retry budgets and backoff for LLM-dependent pipelines",
+                    "url": "https://example.org/llm-retry-budgets",
+                    "snippet": (
+                        "Transient provider errors (timeouts, rate limits, 5xx) deserve "
+                        "bounded exponential backoff; permanent errors must fail fast "
+                        "and trigger degradation paths instead of retries."
+                    ),
+                    "relevance_score": 0.92,
+                    "metadata": {"published_date": "2026-03-11"},
+                },
+                {
+                    "title": "Shipping degraded reports beats shipping nothing",
+                    "url": "https://example.org/graceful-degradation-report-pipelines",
+                    "snippet": (
+                        "Section-level guards with visible placeholders keep partially "
+                        "failed generation pipelines auditable: every degradation is "
+                        "recorded in the trace and surfaced in report metrics."
+                    ),
+                    "relevance_score": 0.89,
+                    "metadata": {"published_date": "2026-02-27"},
+                },
+            ],
+            "arxiv": [
+                {
+                    "title": "Fault-Tolerant Orchestration of LLM Agent Workflows",
+                    "url": "https://arxiv.org/abs/2605.00005",
+                    "snippet": (
+                        "The paper measures recovery quality: retry success rate, degraded "
+                        "output completeness, and human-visible failure reporting cost."
+                    ),
+                    "relevance_score": None,
+                    "metadata": {"published": "2026-05-06T00:00:00"},
+                }
+            ],
+        },
+        "forced_errors": {
+            "arxiv": [
+                {
+                    "query_contains": "evidence",
+                    "error": "simulated arXiv outage for failure-injection coverage",
+                }
+            ]
         },
     },
 ]

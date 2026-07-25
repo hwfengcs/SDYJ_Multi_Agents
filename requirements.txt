@@ -1,5 +1,6 @@
 # Workflow engine
 langgraph>=0.2.0
+langgraph-checkpoint-sqlite>=2.0.0
 
 # LLM Providers
 openai>=1.50.0

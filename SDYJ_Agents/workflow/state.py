@@ -26,6 +26,7 @@ class ResearchState(TypedDict):
     estimated_iterations: int
     final_report: Optional[str]
     report_metrics: Optional[dict]
+    degraded_events: List[dict]  # Graceful-degradation records (skipped tasks, placeholder sections)
     trace: Optional[dict]
     current_step: str
     needs_more_research: bool

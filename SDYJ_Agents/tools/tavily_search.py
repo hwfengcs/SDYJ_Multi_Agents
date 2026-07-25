@@ -9,19 +9,27 @@ from tavily import TavilyClient
 from datetime import datetime
 
 
+DEFAULT_TIMEOUT_SECONDS = 20
+
+
 class TavilySearch:
     """
     Tavily search tool for web information retrieval.
     """
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, timeout: int = DEFAULT_TIMEOUT_SECONDS):
         """
         Initialize Tavily search.
 
         Args:
             api_key: Tavily API key
+            timeout: Request timeout in seconds
         """
-        self.client = TavilyClient(api_key=api_key)
+        try:
+            self.client = TavilyClient(api_key=api_key, timeout=timeout)
+        except TypeError:
+            # Older tavily-python versions do not accept a timeout kwarg.
+            self.client = TavilyClient(api_key=api_key)
 
     def search(
         self,

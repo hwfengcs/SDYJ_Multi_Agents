@@ -55,6 +55,7 @@ python main.py eval --max-scenarios 1
 | `agent_reliability_hard` | RAG, web search, MCP-style tools, human approval, ablation, latency/cost thresholds |
 | `tool_failure_recovery_hard` | Timeout, empty result, duplicate URLs, fallback, source quality, review strategy |
 | `mcp_rag_ops_hard` | Customer-support MCP+RAG with privacy, refusal, safety boundaries, SLO, and cost budget |
+| `llm_failure_recovery_hard` | Injected transient + permanent LLM failures: gates require ≥1 recorded retry AND ≥1 recorded degradation while the report still ships |
 
 ## Metrics
 
@@ -62,12 +63,21 @@ python main.py eval --max-scenarios 1
 | --- | --- |
 | `plan_coverage` | Required concepts covered by plan/report |
 | `section_completeness` | Expected report sections present |
-| `citation_id_coverage` | Evidence IDs cited by the report |
+| `citation_id_coverage` | Evidence IDs cited in the report BODY (reference list excluded — it enumerates every id by construction) |
+| `citation_validity_rate` | `[E#]` mentions that reference real evidence; fabricated ids lower it |
+| `invalid_citation_count` | Fabricated mentions surviving in the final report (expected 0) |
 | `citation_density_per_1k_chars` | Citation density normalized by length |
 | `tool_success_rate` | Retrieval batches without errors |
-| `grounded_key_finding_rate` | Key findings that include evidence IDs |
+| `grounded_key_finding_rate` | Key findings carrying a valid evidence citation |
+| `faithfulness_score` | LLM-judged claim↔evidence support; own threshold (0.70), NOT part of `overall_score` |
+| `citation_precision` | LLM-judged share of claims at least partially supported |
+| `retries_total` | Transient LLM failures recovered by retry |
+| `degraded_event_count` | Recorded graceful degradations |
 | `trace_completeness` | Trace has required fields, nodes, events, tool/LLM details, and replay cache |
-| `overall_score` | Compact dashboard score |
+| `overall_score` | Compact dashboard score (deterministic metrics only, incl. validity) |
+
+The judge is dual-track: offline runs grade with a canned verdict (CI stays
+deterministic and key-free), `--live` grades with the real provider.
 
 Each scenario can define thresholds. A benchmark summary includes:
 

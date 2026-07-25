@@ -10,7 +10,12 @@ from ..agents.coordinator import Coordinator
 from ..agents.planner import Planner
 from ..agents.researcher import Researcher
 from ..agents.rapporteur import Rapporteur
-from ..utils.tracing import record_decision, record_node_event, record_trace_event
+from ..utils.tracing import (
+    record_decision,
+    record_degraded_event,
+    record_node_event,
+    record_trace_event,
+)
 
 
 class WorkflowNodes:
@@ -193,8 +198,22 @@ class WorkflowNodes:
             next_task = self.planner.get_next_task(state)
 
             if next_task:
-                # Execute the task
-                state = self.researcher.execute_task(state, next_task)
+                try:
+                    state = self.researcher.execute_task(state, next_task)
+                except Exception as exc:
+                    # A failed task must not kill the run or spin the loop:
+                    # mark it failed so get_next_task skips it, keep iterating.
+                    for task in (state.get('research_plan') or {}).get('sub_tasks', []):
+                        if task.get('task_id') == next_task.get('task_id'):
+                            task['status'] = 'failed'
+                            break
+                    record_degraded_event(
+                        state.get('trace'),
+                        state,
+                        node="researcher",
+                        where="researcher_task",
+                        error=str(exc),
+                    )
                 state['current_task'] = next_task
                 state['iteration_count'] += 1
             else:
@@ -330,8 +349,28 @@ class WorkflowNodes:
             )
             return "rapporteur"
 
-        # Check if context is sufficient
-        if self.planner.evaluate_context_sufficiency(state):
+        # Check if context is sufficient. A failing sufficiency check (an LLM
+        # call) must never abort the graph from inside a routing decision —
+        # degrade to writing the report with whatever evidence exists.
+        try:
+            sufficient = self.planner.evaluate_context_sufficiency(state)
+        except Exception as exc:
+            record_degraded_event(
+                state.get('trace'),
+                state,
+                node="researcher",
+                where="sufficiency_check",
+                error=str(exc),
+            )
+            record_decision(
+                state.get('trace'),
+                node="researcher",
+                decision="sufficiency_check_failed_default_report",
+                reason="sufficiency check failed; defaulting to report generation",
+            )
+            return "rapporteur"
+
+        if sufficient:
             record_decision(
                 state.get('trace'),
                 node="researcher",

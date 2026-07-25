@@ -1,6 +1,7 @@
 ---
 CURRENT_TIME: {{ CURRENT_TIME }}
 ---
+[PROMPT_ID: planner_create_plan]
 
 You are a research planner. Create a detailed research plan for the following query:
 

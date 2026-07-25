@@ -107,6 +107,7 @@ class Coordinator:
             'estimated_iterations': 0,
             'final_report': None,
             'report_metrics': None,
+            'degraded_events': [],
             'trace': None,
             'current_step': 'initializing',
             'needs_more_research': True,

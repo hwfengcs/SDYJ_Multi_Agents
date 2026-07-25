@@ -10,6 +10,7 @@ from typing import Optional
 from ..workflow.state import ResearchState, PlanStructure, SubTask
 from ..llm.base import BaseLLM
 from ..prompts.loader import PromptLoader
+from ..utils.tracing import record_degraded_event
 
 
 class Planner:
@@ -55,8 +56,22 @@ class Planner:
             user_feedback=user_feedback if user_feedback else None
         )
 
-        # Generate plan
-        response = self.llm.generate(prompt, temperature=0.7)
+        # Generate plan. A dead LLM still yields a minimal usable plan so the
+        # run can continue in degraded mode instead of aborting.
+        try:
+            response = self.llm.generate(prompt, temperature=0.7)
+        except Exception as exc:
+            record_degraded_event(
+                state.get('trace'),
+                state,
+                node="planner",
+                where="planner_create_plan",
+                error=str(exc),
+            )
+            plan = self._create_fallback_plan(query)
+            state['research_plan'] = plan
+            state['estimated_iterations'] = plan.get('estimated_iterations', 2)
+            return state
 
         # Parse JSON response
         try:
@@ -131,7 +146,18 @@ class Planner:
             modifications=modifications
         )
 
-        response = self.llm.generate(prompt, temperature=0.7)
+        try:
+            response = self.llm.generate(prompt, temperature=0.7)
+        except Exception as exc:
+            # Keep the current plan when the modification call fails.
+            record_degraded_event(
+                state.get('trace'),
+                state,
+                node="planner",
+                where="planner_modify_plan",
+                error=str(exc),
+            )
+            return state
 
         # Parse modified plan
         try:
@@ -188,7 +214,19 @@ class Planner:
             max_iterations=max_iterations
         )
 
-        response = self.llm.generate(prompt, temperature=0.3).strip().upper()
+        try:
+            response = self.llm.generate(prompt, temperature=0.3).strip().upper()
+        except Exception as exc:
+            # If the sufficiency check itself fails, stop spending iterations
+            # and let the rapporteur work with the evidence gathered so far.
+            record_degraded_event(
+                state.get('trace'),
+                state,
+                node="researcher",
+                where="planner_evaluate_context",
+                error=str(exc),
+            )
+            return True
         return response == "YES"
 
     def get_next_task(self, state: ResearchState) -> Optional[SubTask]:

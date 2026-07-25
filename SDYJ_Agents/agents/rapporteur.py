@@ -6,6 +6,7 @@ generating the final research report.
 """
 
 import json
+import re
 from typing import Dict, List
 from datetime import datetime
 from ..workflow.state import ResearchState
@@ -16,8 +17,12 @@ from ..utils.evidence import (
     build_evidence_from_results,
     calculate_evidence_metrics,
     format_evidence_for_prompt,
+    validate_citations,
 )
-from ..utils.tracing import record_report_summary
+from ..utils.tracing import record_degraded_event, record_report_summary
+
+
+SECTION_FAILURE_PLACEHOLDER = "（本节生成失败：LLM 错误，已降级输出）"
 
 
 class Rapporteur:
@@ -42,6 +47,26 @@ class Rapporteur:
         self.llm = llm
         self.prompt_loader = PromptLoader()
 
+    def _safe_section(self, state: ResearchState, section: str, generator, fallback=None):
+        """Run one report-section generator, degrading instead of aborting.
+
+        A failed LLM call yields the fallback (or a visible placeholder) and a
+        degraded event, so one dead section can no longer cost the whole report.
+        """
+        try:
+            return generator()
+        except Exception as exc:
+            record_degraded_event(
+                state.get('trace'),
+                state,
+                node="rapporteur",
+                where=f"rapporteur_{section}",
+                error=str(exc),
+            )
+            if callable(fallback):
+                return fallback()
+            return SECTION_FAILURE_PLACEHOLDER
+
     def generate_report(self, state: ResearchState) -> ResearchState:
         """
         Generate a comprehensive research report.
@@ -60,20 +85,80 @@ class Rapporteur:
         output_format = state.get('output_format', 'markdown')
 
         # Summarize findings
-        summary = self._summarize_findings(query, results, evidence_items)
+        summary = self._safe_section(
+            state,
+            "summary",
+            lambda: self._summarize_findings(query, results, evidence_items),
+        )
 
         # Organize information
-        organized_info = self._organize_information(summary, results)
+        organized_info = self._safe_section(
+            state,
+            "organize",
+            lambda: self._organize_information(summary, results),
+            fallback=lambda: {
+                'themes': [
+                    {
+                        'name': '核心发现',
+                        'key_points': [summary[:500]],
+                    }
+                ]
+            },
+        )
+
+        # The LLM is instructed to cite inline; the keyword-overlap heuristic
+        # only backfills key points the model left uncited.
+        citation_stats = self._apply_bullet_citations(organized_info, evidence_items)
+
+        # Markdown and HTML both embed analysis + conclusion; precompute them
+        # under section guards so a single failed call degrades to a
+        # placeholder instead of killing the report.
+        analysis = None
+        conclusion = None
+        if output_format != 'json':
+            analysis = self._safe_section(
+                state,
+                "analysis",
+                lambda: self._generate_synthesized_analysis(
+                    query,
+                    summary,
+                    organized_info,
+                    results,
+                    evidence_items=evidence_items,
+                ),
+            )
+            conclusion = self._safe_section(
+                state,
+                "conclusion",
+                lambda: self._generate_conclusion(query, summary),
+            )
 
         # Generate report based on format
         if output_format == 'html':
-            report = self._generate_html_report(
-                query=query,
-                plan=plan,
-                summary=summary,
-                organized_info=organized_info,
-                results=results,
-                evidence_items=evidence_items
+            report = self._safe_section(
+                state,
+                "html_render",
+                lambda: self._generate_html_report(
+                    query=query,
+                    plan=plan,
+                    summary=summary,
+                    organized_info=organized_info,
+                    results=results,
+                    evidence_items=evidence_items,
+                    analysis=analysis,
+                    conclusion=conclusion,
+                ),
+                # If HTML rendering fails, still deliver the content as Markdown.
+                fallback=lambda: self._generate_markdown_report(
+                    query=query,
+                    plan=plan,
+                    summary=summary,
+                    organized_info=organized_info,
+                    results=results,
+                    evidence_items=evidence_items,
+                    analysis=analysis,
+                    conclusion=conclusion,
+                ),
             )
         elif output_format == 'json':
             report = self._generate_json_report(
@@ -92,10 +177,29 @@ class Rapporteur:
                 summary=summary,
                 organized_info=organized_info,
                 results=results,
-                evidence_items=evidence_items
+                evidence_items=evidence_items,
+                analysis=analysis,
+                conclusion=conclusion,
             )
 
+        # Fabricated evidence ids must never reach the delivered report.
+        report, validity_stats = validate_citations(report, evidence_items)
+
+        degraded_events = state.get('degraded_events') or []
         metrics = calculate_evidence_metrics(results, evidence_items, report)
+        metrics.update(
+            {
+                "generation_citation_validity_rate": validity_stats["citation_validity_rate"],
+                "generation_invalid_citation_count": (
+                    validity_stats["total_citation_mentions"]
+                    - validity_stats["valid_citation_mentions"]
+                ),
+                "generation_invalid_citation_ids": validity_stats["invalid_citation_ids"],
+                "degraded_event_count": len(degraded_events),
+                "degraded": bool(degraded_events),
+                **citation_stats,
+            }
+        )
 
         # Update state
         state['final_report'] = report
@@ -182,6 +286,30 @@ class Rapporteur:
             ]
         }
 
+    def _apply_bullet_citations(
+        self,
+        organized_info: Dict,
+        evidence_items: List[Dict],
+    ) -> Dict[str, int]:
+        """Ensure every key point carries a citation, tracking how it got one."""
+        llm_cited = 0
+        fallback = 0
+        for theme in organized_info.get('themes', []):
+            points = theme.get('key_points', [])
+            for index, point in enumerate(points):
+                point = str(point)
+                if re.search(r"\[E\d+\]", point):
+                    llm_cited += 1
+                    continue
+                cited = append_citations(point, evidence_items)
+                if cited != point:
+                    fallback += 1
+                points[index] = cited
+        return {
+            "llm_cited_bullet_count": llm_cited,
+            "heuristic_citation_fallback_count": fallback,
+        }
+
     def _generate_markdown_report(
         self,
         query: str,
@@ -189,7 +317,9 @@ class Rapporteur:
         summary: str,
         organized_info: Dict,
         results: List[Dict],
-        evidence_items: List[Dict] | None = None
+        evidence_items: List[Dict] | None = None,
+        analysis: str | None = None,
+        conclusion: str | None = None,
     ) -> str:
         """
         Generate a structured Markdown report.
@@ -200,6 +330,8 @@ class Rapporteur:
             summary: Research summary
             organized_info: Organized information
             results: Research results
+            analysis: Precomputed synthesized analysis (generated when None)
+            conclusion: Precomputed conclusion (generated when None)
 
         Returns:
             Markdown formatted report
@@ -207,6 +339,16 @@ class Rapporteur:
         # Build report sections
         sections = []
         evidence_items = evidence_items or build_evidence_from_results(results)
+        if analysis is None:
+            analysis = self._generate_synthesized_analysis(
+                query,
+                summary,
+                organized_info,
+                results,
+                evidence_items=evidence_items,
+            )
+        if conclusion is None:
+            conclusion = self._generate_conclusion(query, summary)
 
         # Title
         sections.append(f"# 研究报告：{query}\n")
@@ -226,17 +368,11 @@ class Rapporteur:
         for theme in organized_info.get('themes', []):
             sections.append(f"\n### {theme['name']}\n")
             for point in theme.get('key_points', []):
-                sections.append(f"- {append_citations(point, evidence_items)}\n")
+                sections.append(f"- {point}\n")
 
         # Synthesized Analysis (NEW: generate integrated analysis instead of simple listing)
         sections.append("\n## 深度分析\n")
-        sections.append(self._generate_synthesized_analysis(
-            query,
-            summary,
-            organized_info,
-            results,
-            evidence_items=evidence_items,
-        ))
+        sections.append(analysis)
 
         # Source overview
         sections.append("\n## 来源概览\n")
@@ -248,7 +384,7 @@ class Rapporteur:
 
         # Conclusion
         sections.append("\n## 结论\n")
-        sections.append(self._generate_conclusion(query, summary))
+        sections.append(conclusion)
 
         return '\n'.join(sections)
 
@@ -269,7 +405,7 @@ class Rapporteur:
                 key_findings.append(
                     {
                         "theme": theme.get("name"),
-                        "claim": append_citations(point, evidence_items),
+                        "claim": point,
                     }
                 )
 
@@ -453,7 +589,7 @@ class Rapporteur:
         )
 
         analysis = self.llm.generate(prompt, temperature=0.6, max_tokens=2000)
-        return append_citations(analysis, evidence_items, max_ids=3)
+        return analysis
 
     def _generate_conclusion(self, query: str, summary: str) -> str:
         """
@@ -482,7 +618,9 @@ class Rapporteur:
         summary: str,
         organized_info: Dict,
         results: List[Dict],
-        evidence_items: List[Dict] | None = None
+        evidence_items: List[Dict] | None = None,
+        analysis: str | None = None,
+        conclusion: str | None = None,
     ) -> str:
         """
         Generate a structured HTML report.
@@ -493,20 +631,23 @@ class Rapporteur:
             summary: Research summary
             organized_info: Organized information
             results: Research results
+            analysis: Precomputed synthesized analysis (generated when None)
+            conclusion: Precomputed conclusion (generated when None)
 
         Returns:
             HTML formatted report
         """
-        # Generate analysis and conclusion
         evidence_items = evidence_items or build_evidence_from_results(results)
-        analysis = self._generate_synthesized_analysis(
-            query,
-            summary,
-            organized_info,
-            results,
-            evidence_items=evidence_items,
-        )
-        conclusion = self._generate_conclusion(query, summary)
+        if analysis is None:
+            analysis = self._generate_synthesized_analysis(
+                query,
+                summary,
+                organized_info,
+                results,
+                evidence_items=evidence_items,
+            )
+        if conclusion is None:
+            conclusion = self._generate_conclusion(query, summary)
 
         # Format themes as HTML-friendly text
         themes_text = ""

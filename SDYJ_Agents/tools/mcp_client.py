@@ -9,6 +9,9 @@ from datetime import datetime
 import httpx
 
 
+DEFAULT_TIMEOUT_SECONDS = 20.0
+
+
 class MCPClient:
     """
     MCP client for extended tool and data source access.
@@ -49,7 +52,7 @@ class MCPClient:
             Dictionary containing search results
         """
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(DEFAULT_TIMEOUT_SECONDS)) as client:
                 response = await client.post(
                     f"{self.server_url}/tools/{tool_name}",
                     json={
@@ -99,7 +102,7 @@ class MCPClient:
             List of available tools with their descriptions
         """
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(DEFAULT_TIMEOUT_SECONDS)) as client:
                 response = await client.get(
                     f"{self.server_url}/tools",
                     headers=self.headers
@@ -125,7 +128,7 @@ class MCPClient:
             Tool execution results
         """
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(DEFAULT_TIMEOUT_SECONDS)) as client:
                 response = await client.post(
                     f"{self.server_url}/tools/{tool_name}",
                     json=parameters,

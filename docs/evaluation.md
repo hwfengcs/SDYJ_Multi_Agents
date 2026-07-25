@@ -40,6 +40,17 @@ behavior. The operational benchmark guide is now maintained in
    - `agent_reliability_hard`: evaluation design for a RAG + web + MCP research agent.
    - `tool_failure_recovery_hard`: timeout, empty result, duplicate URL, and fallback behavior.
    - `mcp_rag_ops_hard`: customer-support MCP + RAG evaluation with privacy, refusal, SLO, and cost constraints.
+   - `llm_failure_recovery_hard`: injected transient + permanent LLM failures; gates on visible retries and graceful degradation.
+
+5. **LLM-as-judge faithfulness (dual-track)**
+   - Samples cited key-finding claims and asks a judge model whether each claim
+     is actually supported by the evidence it cites (supported / partial /
+     unsupported), in one batched call.
+   - Offline mode uses a canned judge verdict so CI stays deterministic and
+     key-free; `--live` grades with the real provider.
+   - Reported as its own thresholded dimension (`faithfulness_score`,
+     `citation_precision`) and deliberately NOT folded into `overall_score`,
+     so the weighted blend cannot be gamed.
 
 ## Commands
 
@@ -83,14 +94,26 @@ run trace under `outputs/traces/`. Current metrics include:
 | --- | --- |
 | `plan_coverage` | Required scenario concepts covered by the plan/report |
 | `section_completeness` | Expected report sections present |
-| `citation_id_coverage` | Share of evidence IDs cited in the report |
+| `citation_id_coverage` | Share of evidence IDs cited in the report body (the auto-generated reference list is excluded, so the metric cannot self-fulfill) |
+| `citation_validity_rate` | Share of `[E#]` mentions that reference evidence that actually exists — fabricated ids lower this instead of inflating coverage |
+| `invalid_citation_count` | Fabricated `[E#]` mentions found in the final report (should be 0: generation-time validation strips them) |
 | `citation_density_per_1k_chars` | Evidence citation density normalized by report length |
 | `duplicate_url_ratio` | Duplicate raw URLs before evidence deduplication |
 | `tool_success_rate` | Retrieval batches without error |
-| `grounded_key_finding_rate` | Key finding bullets that include evidence IDs |
-| `overall_score` | Weighted dashboard score for quick comparison |
+| `grounded_key_finding_rate` | Key finding bullets carrying a VALID evidence citation |
+| `faithfulness_score` | LLM-judged: (supported + 0.5×partial) / judged claims; own threshold, not in `overall_score` |
+| `citation_precision` | LLM-judged: share of judged claims at least partially supported by their cited evidence |
+| `retries_total` | Transient LLM failures recovered by retry (from trace `llm_calls.retries`) |
+| `degraded_event_count` | Graceful degradations recorded in the run (skipped task, placeholder section, defaulted routing) |
+| `trace_completeness` | Trace has required fields, nodes, events, tool/LLM details, and replay cache |
+| `overall_score` | Weighted dashboard score for quick comparison (includes `citation_validity_rate`) |
 
 ## Latest Local Benchmark
+
+> Historical result recorded against the v0.5 metric definitions (citation
+> metrics then counted the reference list and did not validate ids). Scores are
+> not directly comparable with the current metric set; regenerate with
+> `python main.py benchmark run` for current numbers.
 
 Run date: 2026-05-02
 Mode: live DeepSeek model with canned evidence

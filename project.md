@@ -146,7 +146,6 @@ START → Coordinator → Planner → [用户审核] → Researcher ⇄ Planner 
 - `search_arxiv(query: str)`: arXiv 学术搜索
 - `search_via_mcp(query: str)`: 通过 MCP 服务搜索
 - `aggregate_results(results: list)`: 聚合搜索结果
-- `extract_relevant_info(raw_data: dict)`: 提取相关信息
 
 **数据源集成：**
 

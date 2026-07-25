@@ -17,6 +17,8 @@ class LLMConfig(BaseModel):
     api_key: str = Field(..., description="API key")
     temperature: float = Field(default=0.7, description="Temperature")
     max_tokens: Optional[int] = Field(default=None, description="Max tokens")
+    max_retries: int = Field(default=2, description="Retries for transient LLM API failures")
+    retry_base_delay: float = Field(default=1.0, description="Base delay (seconds) for retry backoff")
 
 
 class SearchConfig(BaseModel):
@@ -87,7 +89,9 @@ def load_config_from_env() -> Config:
         model=os.getenv("LLM_MODEL"),
         api_key=llm_api_key,
         temperature=float(os.getenv("LLM_TEMPERATURE", "0.7")),
-        max_tokens=int(os.getenv("LLM_MAX_TOKENS")) if os.getenv("LLM_MAX_TOKENS") else None
+        max_tokens=int(os.getenv("LLM_MAX_TOKENS")) if os.getenv("LLM_MAX_TOKENS") else None,
+        max_retries=int(os.getenv("LLM_MAX_RETRIES", "2")),
+        retry_base_delay=float(os.getenv("LLM_RETRY_BASE_DELAY", "1.0")),
     )
 
     # Create search config

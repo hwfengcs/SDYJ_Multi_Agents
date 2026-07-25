@@ -1,6 +1,7 @@
 ---
 CURRENT_TIME: {{ CURRENT_TIME }}
 ---
+[PROMPT_ID: planner_modify_plan]
 
 You are a research planner. Modify the following research plan based on user feedback.
 

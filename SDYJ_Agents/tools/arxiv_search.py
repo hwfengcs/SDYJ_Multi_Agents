@@ -18,7 +18,9 @@ class ArxivSearch:
         """
         Initialize arXiv search.
         """
-        self.client = arxiv.Client()
+        # Bounded retries with a short delay so a slow arXiv endpoint cannot
+        # stall a research iteration indefinitely.
+        self.client = arxiv.Client(num_retries=2, delay_seconds=1)
 
     def search(
         self,

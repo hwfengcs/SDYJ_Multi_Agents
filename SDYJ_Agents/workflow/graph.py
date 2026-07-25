@@ -4,6 +4,7 @@ Research Workflow Graph
 This module creates and manages the LangGraph workflow for the research system.
 """
 
+from pathlib import Path
 from typing import Optional
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import MemorySaver
@@ -15,11 +16,46 @@ from ..agents.rapporteur import Rapporteur
 from ..utils.tracing import record_decision
 
 
+DEFAULT_MAX_ITERATIONS = 5
+
+
+def build_invoke_config(thread_id: str, max_iterations: Optional[int] = None) -> dict:
+    """Build the LangGraph invocation config for one run.
+
+    The researcher self-loop consumes one super-step per iteration, so the
+    recursion limit must scale with max_iterations or LangGraph's default (25)
+    aborts long runs with GraphRecursionError.
+    """
+    iterations = max_iterations or DEFAULT_MAX_ITERATIONS
+    return {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": max(25, 2 * iterations + 10),
+    }
+
+
+def open_sqlite_checkpointer(db_path: str | Path):
+    """Open a durable sqlite checkpointer; the caller owns the connection.
+
+    Constructed directly (not via ``from_conn_string``, whose context-manager
+    lifetime does not fit a workflow object). Imported lazily so MemorySaver
+    paths never require langgraph-checkpoint-sqlite to be installed.
+    """
+    import sqlite3
+
+    from langgraph.checkpoint.sqlite import SqliteSaver
+
+    path = Path(db_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path), check_same_thread=False)
+    return SqliteSaver(conn)
+
+
 def create_research_graph(
     coordinator: Coordinator,
     planner: Planner,
     researcher: Researcher,
-    rapporteur: Rapporteur
+    rapporteur: Rapporteur,
+    checkpointer=None,
 ):
     """
     Create the research workflow graph.
@@ -29,6 +65,7 @@ def create_research_graph(
         planner: Planner agent instance
         researcher: Researcher agent instance
         rapporteur: Rapporteur agent instance
+        checkpointer: Optional LangGraph checkpointer (defaults to in-memory)
 
     Returns:
         Compiled LangGraph workflow
@@ -87,7 +124,8 @@ def create_research_graph(
 
     # Compile the graph with checkpointer
     # Add interrupt before human_review for human-in-the-loop
-    checkpointer = MemorySaver()
+    if checkpointer is None:
+        checkpointer = MemorySaver()
     return workflow.compile(
         checkpointer=checkpointer,
         interrupt_before=["human_review"]
@@ -106,7 +144,8 @@ class ResearchWorkflow:
         coordinator: Coordinator,
         planner: Planner,
         researcher: Researcher,
-        rapporteur: Rapporteur
+        rapporteur: Rapporteur,
+        checkpointer=None,
     ):
         """
         Initialize the research workflow.
@@ -116,14 +155,29 @@ class ResearchWorkflow:
             planner: Planner agent
             researcher: Researcher agent
             rapporteur: Rapporteur agent
+            checkpointer: Optional durable checkpointer (defaults to in-memory)
         """
         self.coordinator = coordinator
         self.planner = planner
         self.researcher = researcher
         self.rapporteur = rapporteur
+        self.checkpointer = checkpointer
         self.graph = create_research_graph(
-            coordinator, planner, researcher, rapporteur
+            coordinator, planner, researcher, rapporteur, checkpointer=checkpointer
         )
+
+    def close(self) -> None:
+        """Release the checkpointer's sqlite connection.
+
+        On Windows an open sqlite handle keeps the run directory locked, so
+        callers must close durable workflows when done (no-op for MemorySaver).
+        """
+        conn = getattr(self.checkpointer, "conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     def run(
         self,
@@ -162,7 +216,7 @@ class ResearchWorkflow:
 
         # Run the graph with thread configuration for checkpointer
         thread_id = trace.get("run_id", "1") if trace else "1"
-        config = {"configurable": {"thread_id": thread_id}}
+        config = build_invoke_config(thread_id, max_iterations)
         final_state = self.graph.invoke(initial_state, config=config)
 
         return final_state
@@ -204,7 +258,7 @@ class ResearchWorkflow:
 
         # Stream the graph execution with thread configuration for checkpointer
         thread_id = trace.get("run_id", "1") if trace else "1"
-        config = {"configurable": {"thread_id": thread_id}}
+        config = build_invoke_config(thread_id, max_iterations)
         for output in self.graph.stream(initial_state, config=config):
             yield output
 
@@ -247,10 +301,61 @@ class ResearchWorkflow:
             initial_state['max_iterations'] = max_iterations
 
         thread_id = trace.get("run_id", "1") if trace else "1"
-        config = {"configurable": {"thread_id": thread_id}}
+        config = build_invoke_config(thread_id, max_iterations)
 
-        stream_input = initial_state
+        yield from self._stream_with_approvals(
+            initial_state, config, auto_approve, human_approval_callback
+        )
 
+    def resume_interactive(
+        self,
+        thread_id: str,
+        max_iterations: Optional[int] = None,
+        auto_approve: bool = False,
+        human_approval_callback = None,
+        trace: Optional[dict] = None,
+    ):
+        """Continue a checkpointed run from its last saved super-step.
+
+        Works for both a pending human_review interrupt and a mid-research
+        crash: streaming with a ``None`` input resumes from the checkpoint.
+
+        Args:
+            thread_id: The original run's thread id (its run_id)
+            max_iterations: Optional new iteration budget
+            auto_approve: Whether to auto-approve a pending plan review
+            human_approval_callback: Callback for pending plan review
+            trace: Trace object to attach for continued event recording
+
+        Yields:
+            State updates during execution
+        """
+        config = build_invoke_config(thread_id, max_iterations)
+        snapshot = self.graph.get_state(config)
+        values = getattr(snapshot, "values", None)
+        if not isinstance(values, dict) or not values:
+            raise ValueError(f"No checkpoint found for thread '{thread_id}'")
+
+        # The graph uses StateGraph(dict): the whole state is ONE last-value
+        # channel, so update_state must always receive the FULL state dict —
+        # a partial dict would replace the state and drop every other key.
+        if trace is not None:
+            values["trace"] = trace
+        if max_iterations:
+            values["max_iterations"] = max_iterations
+        self.graph.update_state(config, values)
+
+        yield from self._stream_with_approvals(
+            None, config, auto_approve, human_approval_callback
+        )
+
+    def _stream_with_approvals(
+        self,
+        stream_input,
+        config: dict,
+        auto_approve: bool,
+        human_approval_callback,
+    ):
         # LangGraph interrupts before every human_review node. A rejected plan
         # routes back to Planner and creates another interrupt, so the resume
         # loop must handle approval more than once.
@@ -270,47 +375,66 @@ class ResearchWorkflow:
 
                 current_state['current_step'] = 'awaiting_approval'
 
-                if auto_approve:
-                    current_state['plan_approved'] = True
-                    current_state['user_feedback'] = None
-                    record_decision(
-                        current_state.get("trace"),
-                        node="human_review",
-                        decision="plan_auto_approved_at_interrupt",
-                        reason="auto_approve stream interrupt handling",
-                    )
-                elif human_approval_callback:
-                    approved, feedback = human_approval_callback(current_state)
-
-                    if approved:
-                        current_state['plan_approved'] = True
-                        current_state['user_feedback'] = None
-                        record_decision(
-                            current_state.get("trace"),
-                            node="human_review",
-                            decision="plan_approved",
-                            reason="human callback approved the plan",
-                        )
-                    else:
-                        current_state['plan_approved'] = False
-                        current_state['user_feedback'] = feedback
-                        record_decision(
-                            current_state.get("trace"),
-                            node="human_review",
-                            decision="plan_rejected",
-                            reason="human callback requested revision",
-                            metadata={"feedback": feedback},
-                        )
-                else:
+                if not self._apply_approval(
+                    config, current_state, auto_approve, human_approval_callback
+                ):
                     return
-
-                self.graph.update_state(config, current_state)
                 stream_input = None
                 interrupted = True
                 break
 
             if not interrupted:
                 return
+
+    def _apply_approval(
+        self,
+        config: dict,
+        current_state: dict,
+        auto_approve: bool,
+        human_approval_callback,
+    ) -> bool:
+        """Resolve one human_review interrupt; False means stop streaming.
+
+        The graph uses StateGraph(dict): the whole state is ONE last-value
+        channel, so update_state must receive the FULL state dict — writing a
+        partial dict would replace the state and drop every other key.
+        """
+        if auto_approve:
+            current_state['plan_approved'] = True
+            current_state['user_feedback'] = None
+            record_decision(
+                current_state.get("trace"),
+                node="human_review",
+                decision="plan_auto_approved_at_interrupt",
+                reason="auto_approve stream interrupt handling",
+            )
+        elif human_approval_callback:
+            approved, feedback = human_approval_callback(current_state)
+
+            if approved:
+                current_state['plan_approved'] = True
+                current_state['user_feedback'] = None
+                record_decision(
+                    current_state.get("trace"),
+                    node="human_review",
+                    decision="plan_approved",
+                    reason="human callback approved the plan",
+                )
+            else:
+                current_state['plan_approved'] = False
+                current_state['user_feedback'] = feedback
+                record_decision(
+                    current_state.get("trace"),
+                    node="human_review",
+                    decision="plan_rejected",
+                    reason="human callback requested revision",
+                    metadata={"feedback": feedback},
+                )
+        else:
+            return False
+
+        self.graph.update_state(config, current_state)
+        return True
 
     def get_workflow_schema(self) -> dict:
         """

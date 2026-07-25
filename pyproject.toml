@@ -32,6 +32,7 @@ classifiers = [
 ]
 dependencies = [
   "langgraph>=0.2.0",
+  "langgraph-checkpoint-sqlite>=2.0.0",
   "openai>=1.50.0",
   "anthropic>=0.39.0",
   "google-genai>=1.0.0",

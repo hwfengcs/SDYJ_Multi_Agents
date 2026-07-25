@@ -1,6 +1,7 @@
 ---
 CURRENT_TIME: {{ CURRENT_TIME }}
 ---
+[PROMPT_ID: planner_evaluate_context]
 
 Evaluate whether the gathered research context is sufficient to answer the query.
 

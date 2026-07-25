@@ -12,7 +12,8 @@ Each completed research, replay, or benchmark run is written to:
 outputs/runs/<run-id>/
   trace.json
   events.jsonl
-  state.final.json
+  state.final.json        # state.partial.json when a run crashed or was interrupted
+  checkpoint.sqlite       # durable LangGraph checkpoint (research runs)
   report.md|html|json
 ```
 
@@ -73,12 +74,41 @@ does not call real model or search APIs.
 python main.py replay <run-id>
 ```
 
+Recorded LLM responses are matched by **prompt hash first** (each
+`replay_cache.llm_calls` entry stores a sha256 of its prompt with the injected
+`CURRENT_TIME` line normalized away, so timestamps never break matching),
+falling back to sequential order for hash-less legacy traces or unmatched
+prompts. Tool results are matched by `(source, query)` first, then by recorded
+order. This keeps traces replayable even when the number or order of calls
+shifts between code versions, and retries never change the call count: one
+logical call produces exactly one `llm_calls` entry with `retries` /
+`attempt_errors` fields.
+
 Replay creates a new run with `mode=replay` and stores its own trace. This makes
 it possible to compare the original and replayed executions:
 
 ```bash
 python main.py diff-runs <original-run-id> <replay-run-id>
 ```
+
+## Resume
+
+Research runs default to a durable per-run sqlite checkpoint
+(`outputs/runs/<run-id>/checkpoint.sqlite`, disable with
+`SDYJ_DURABLE_CHECKPOINT=0`). A crashed or interrupted run can be continued
+from its last completed super-step — including a pending human-review
+interrupt:
+
+```bash
+python main.py resume <run-id>
+python main.py resume <run-id> --auto-approve
+```
+
+Resume rebuilds the agents against the run's checkpoint database, reattaches
+the original trace (marked with `resumed_at`), and continues streaming. Crash
+paths persist `state.partial.json` plus the merged trace, and the CLI exits
+with code 4 so automation can distinguish a crashed research run from success
+(eval keeps exit codes 2/3).
 
 ## What Replay Is For
 

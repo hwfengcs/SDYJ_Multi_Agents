@@ -124,17 +124,60 @@ def build_evidence_from_results(results: Sequence[Dict[str, Any]]) -> List[Evide
     return evidence
 
 
-def format_evidence_for_prompt(evidence_items: Sequence[EvidenceItem], limit: int = 30) -> str:
+def format_evidence_for_prompt(
+    evidence_items: Sequence[EvidenceItem],
+    limit: int = 30,
+    char_budget: int = 12000,
+) -> str:
     """Render evidence with stable IDs for LLM synthesis prompts."""
-    lines = []
-    for item in evidence_items[:limit]:
-        evidence_id = item.get("evidence_id", "E?")
-        title = item.get("title", "Untitled")
-        source = item.get("source", "unknown")
-        url = item.get("url") or "N/A"
-        snippet = str(item.get("snippet", ""))[:350]
-        lines.append(f"- [{evidence_id}] ({source}) {title} | {url}\n  {snippet}")
-    return "\n".join(lines)
+    selected = select_evidence_for_prompt(evidence_items, limit=limit, char_budget=char_budget)
+    return "\n".join(_render_evidence_line(item) for item in selected)
+
+
+def _render_evidence_line(item: EvidenceItem, snippet_chars: int = 350) -> str:
+    evidence_id = item.get("evidence_id", "E?")
+    title = item.get("title", "Untitled")
+    source = item.get("source", "unknown")
+    url = item.get("url") or "N/A"
+    snippet = str(item.get("snippet", ""))[:snippet_chars]
+    return f"- [{evidence_id}] ({source}) {title} | {url}\n  {snippet}"
+
+
+def _relevance_value(item: EvidenceItem) -> float:
+    relevance = item.get("relevance_score")
+    if isinstance(relevance, (int, float)):
+        return float(relevance)
+    return 0.0
+
+
+def select_evidence_for_prompt(
+    evidence_items: Sequence[EvidenceItem],
+    limit: int = 30,
+    char_budget: int = 12000,
+) -> List[EvidenceItem]:
+    """Pick the evidence subset an LLM prompt should see.
+
+    Ordering is deterministic: relevance score desc, published date desc,
+    original insertion order as the final tiebreak. Items are accepted in that
+    order until either the item limit or the rendered-character budget is hit,
+    so low-relevance tails can no longer crowd out high-relevance evidence.
+    """
+    indexed = list(enumerate(evidence_items))
+    # Stable multi-pass sort: least-significant key first.
+    indexed.sort(key=lambda pair: str(pair[1].get("published_date") or ""), reverse=True)
+    indexed.sort(key=lambda pair: _relevance_value(pair[1]), reverse=True)
+
+    selected: List[EvidenceItem] = []
+    used_chars = 0
+    for _, item in indexed:
+        if len(selected) >= limit:
+            break
+        rendered_chars = len(_render_evidence_line(item))
+        if selected and used_chars + rendered_chars > char_budget:
+            break
+        selected.append(item)
+        used_chars += rendered_chars
+    return selected
 
 
 def select_evidence_ids_for_text(
@@ -188,12 +231,81 @@ def append_citations(text: str, evidence_items: Sequence[EvidenceItem], max_ids:
     return f"{text} {' '.join(f'[{evidence_id}]' for evidence_id in ids)}"
 
 
+def valid_evidence_ids(evidence_items: Sequence[EvidenceItem]) -> set:
+    """Return the set of evidence ids that actually exist."""
+    return {
+        str(item.get("evidence_id"))
+        for item in evidence_items
+        if item.get("evidence_id")
+    }
+
+
+def validate_citations(
+    text: str,
+    evidence_items: Sequence[EvidenceItem],
+) -> tuple[str, Dict[str, Any]]:
+    """Strip citation ids that do not exist in the evidence set.
+
+    Returns the cleaned text plus stats about total/valid/invalid mentions, so
+    fabricated ids can never survive into the delivered report nor inflate
+    grounding metrics.
+    """
+    valid_ids = valid_evidence_ids(evidence_items)
+    stats = {
+        "total_citation_mentions": 0,
+        "valid_citation_mentions": 0,
+        "invalid_citation_ids": [],
+    }
+
+    def _check(match: re.Match) -> str:
+        stats["total_citation_mentions"] += 1
+        evidence_id = f"E{match.group(1)}"
+        if evidence_id in valid_ids:
+            stats["valid_citation_mentions"] += 1
+            return match.group(0)
+        if evidence_id not in stats["invalid_citation_ids"]:
+            stats["invalid_citation_ids"].append(evidence_id)
+        return ""
+
+    cleaned = re.sub(r" ?\[E(\d+)\]", _check, text or "")
+    total = stats["total_citation_mentions"]
+    stats["citation_validity_rate"] = (
+        stats["valid_citation_mentions"] / total if total else 1.0
+    )
+    return cleaned, stats
+
+
+def _is_reference_list_line(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith("- [E") or '"citation"' in stripped
+
+
+def extract_body_citations(report: str) -> List[str]:
+    """Collect ``[E#]`` mentions outside the reference list.
+
+    Reference-list lines (``- [E1] title ...`` in Markdown, ``"citation"``
+    entries in JSON) enumerate every evidence id by construction, so counting
+    them would make citation coverage self-fulfilling.
+    """
+    mentions: List[str] = []
+    for line in (report or "").splitlines():
+        if _is_reference_list_line(line):
+            continue
+        mentions.extend(re.findall(r"\[E\d+\]", line))
+    return mentions
+
+
 def calculate_evidence_metrics(
     research_results: Sequence[Dict[str, Any]],
     evidence_items: Sequence[EvidenceItem],
     report: str = "",
 ) -> Dict[str, Any]:
-    """Calculate lightweight grounding metrics for reports and evals."""
+    """Calculate lightweight grounding metrics for reports and evals.
+
+    Citation metrics only count ids that exist in the evidence set and only
+    look at report-body mentions, so neither a fabricated ``[E99]`` nor the
+    auto-generated reference list can inflate coverage.
+    """
     raw_urls = []
     successful_batches = 0
     total_batches = len(research_results)
@@ -207,12 +319,21 @@ def calculate_evidence_metrics(
                 raw_urls.append(url)
 
     duplicate_urls = len(raw_urls) - len(set(raw_urls))
-    citation_ids = set(re.findall(r"\[E\d+\]", report or ""))
+    valid_ids = valid_evidence_ids(evidence_items)
+    all_mentions = re.findall(r"\[E\d+\]", report or "")
+    valid_mention_count = sum(1 for m in all_mentions if m[1:-1] in valid_ids)
+    body_mentions = extract_body_citations(report)
+    citation_ids = {m for m in body_mentions if m[1:-1] in valid_ids}
     key_finding_lines = [
         line for line in (report or "").splitlines()
-        if line.strip().startswith("- ") and "##" not in line
+        if line.strip().startswith("- ")
+        and "##" not in line
+        and not _is_reference_list_line(line)
     ]
-    cited_key_finding_lines = [line for line in key_finding_lines if re.search(r"\[E\d+\]", line)]
+    cited_key_finding_lines = [
+        line for line in key_finding_lines
+        if any(citation in line for citation in citation_ids)
+    ]
 
     return {
         "raw_url_count": len(raw_urls),
@@ -220,6 +341,10 @@ def calculate_evidence_metrics(
         "duplicate_url_ratio": duplicate_urls / len(raw_urls) if raw_urls else 0.0,
         "evidence_count": len(evidence_items),
         "citation_count": len(citation_ids),
+        "citation_validity_rate": (
+            valid_mention_count / len(all_mentions) if all_mentions else 1.0
+        ),
+        "invalid_citation_count": len(all_mentions) - valid_mention_count,
         "citation_density_per_1k_chars": (
             len(citation_ids) / max(len(report), 1) * 1000 if report else 0.0
         ),

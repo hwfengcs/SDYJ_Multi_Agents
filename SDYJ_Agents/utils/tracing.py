@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any, Dict, Iterator, Optional
 from uuid import uuid4
 
 from ..llm.base import BaseLLM
+from .llm_retry import RetryPolicy, is_transient
 
 
 def utc_now_iso() -> str:
@@ -84,6 +86,20 @@ def _stable_json(value: Any) -> str:
 
 def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+_CURRENT_TIME_LINE_RE = re.compile(r"CURRENT_TIME:.*")
+
+
+def replay_prompt_hash(prompt: str) -> str:
+    """Hash a prompt for replay matching, ignoring the injected timestamp.
+
+    Every template front matter carries a ``CURRENT_TIME: ...`` line that
+    differs between the recorded run and the replay, so replay matching must
+    hash a normalized prompt (the observability ``prompt_hash`` on llm_calls
+    stays exact).
+    """
+    return _sha256_text(_CURRENT_TIME_LINE_RE.sub("CURRENT_TIME: <normalized>", prompt))
 
 
 def _safe_text(text: str, limit: int = 1000) -> str:
@@ -294,6 +310,37 @@ def record_tool_call(
         trace.setdefault("errors", []).append({"where": f"tool:{source}", "error": error})
 
 
+def record_degraded_event(
+    trace: Optional[Dict[str, Any]],
+    state: Optional[Dict[str, Any]],
+    node: str,
+    where: str,
+    error: str,
+) -> None:
+    """Record a graceful-degradation decision on both the trace and the state.
+
+    Degradations (a skipped task, a placeholder report section, a defaulted
+    routing decision) must stay visible: they land in ``state.degraded_events``
+    for report metrics and in the trace event stream / errors for debugging.
+    """
+    entry = {
+        "node": node,
+        "where": where,
+        "error": error,
+        "timestamp": utc_now_iso(),
+    }
+    if isinstance(state, dict):
+        state.setdefault("degraded_events", []).append(entry)
+    record_trace_event(
+        trace,
+        event_type="degraded",
+        name=where,
+        node=node,
+        status="degraded",
+        error=error,
+    )
+
+
 def record_report_summary(
     trace: Optional[Dict[str, Any]],
     report_format: str,
@@ -432,8 +479,13 @@ def save_trace(
     final_state: Optional[Dict[str, Any]] = None,
     report: str | None = None,
     report_extension: str | None = None,
+    partial: bool = False,
 ) -> Optional[Path]:
-    """Persist trace JSON plus a run bundle under `<output_dir>/runs/<run-id>/`."""
+    """Persist trace JSON plus a run bundle under `<output_dir>/runs/<run-id>/`.
+
+    With ``partial=True`` the state snapshot is written as ``state.partial.json``
+    so crash-path saves are distinguishable from completed runs.
+    """
     if not trace:
         return None
     finalize_trace(trace)
@@ -452,9 +504,10 @@ def save_trace(
 
     state_artifact = _state_for_artifact(final_state)
     if state_artifact is not None:
-        state_path = run_dir / "state.final.json"
+        state_filename = "state.partial.json" if partial else "state.final.json"
+        state_path = run_dir / state_filename
         _write_json(state_path, state_artifact)
-        trace["artifacts"]["final_state"] = str(state_path)
+        trace["artifacts"]["partial_state" if partial else "final_state"] = str(state_path)
 
     if report is None and final_state:
         report = final_state.get("final_report")
@@ -631,71 +684,115 @@ def diff_traces(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class InstrumentedLLM(BaseLLM):
-    """Wrap an LLM and record latency, rough sizes, and provider usage metadata."""
+    """Wrap an LLM and record latency, rough sizes, and provider usage metadata.
 
-    def __init__(self, inner: BaseLLM, trace: Optional[Dict[str, Any]]):
+    Transient provider failures are retried here (never inside providers), so
+    exactly one llm_call event is recorded per logical call regardless of
+    retries — deterministic replay depends on that stable call count.
+    """
+
+    def __init__(
+        self,
+        inner: BaseLLM,
+        trace: Optional[Dict[str, Any]],
+        retry_policy: Optional[RetryPolicy] = None,
+    ):
         super().__init__(
             api_key=getattr(inner, "api_key", ""),
             model=getattr(inner, "model", "unknown"),
         )
         self.inner = inner
         self.trace = trace
+        self.retry_policy = retry_policy
 
     def generate(self, prompt: str, **kwargs) -> str:
         started = time.perf_counter()
         call_id = f"L{len(self.trace.get('llm_calls', [])) + 1}" if self.trace else None
-        try:
-            response = self.inner.generate(prompt, **kwargs)
-            latency_ms = _safe_round_ms(time.perf_counter() - started)
-            self._record_call(
-                call_id=call_id,
-                prompt=prompt,
-                response=response,
-                kwargs=kwargs,
-                latency_ms=latency_ms,
-                error=None,
-            )
-            return response
-        except Exception as exc:
-            latency_ms = _safe_round_ms(time.perf_counter() - started)
-            self._record_call(
-                call_id=call_id,
-                prompt=prompt,
-                response="",
-                kwargs=kwargs,
-                latency_ms=latency_ms,
-                error=str(exc),
-            )
-            raise
+        policy = self.retry_policy
+        attempt = 0
+        attempt_errors: list[str] = []
+        while True:
+            try:
+                response = self.inner.generate(prompt, **kwargs)
+                latency_ms = _safe_round_ms(time.perf_counter() - started)
+                self._record_call(
+                    call_id=call_id,
+                    prompt=prompt,
+                    response=response,
+                    kwargs=kwargs,
+                    latency_ms=latency_ms,
+                    error=None,
+                    retries=attempt,
+                    attempt_errors=attempt_errors,
+                )
+                return response
+            except Exception as exc:
+                if policy is None or attempt >= policy.max_retries or not is_transient(exc):
+                    latency_ms = _safe_round_ms(time.perf_counter() - started)
+                    self._record_call(
+                        call_id=call_id,
+                        prompt=prompt,
+                        response="",
+                        kwargs=kwargs,
+                        latency_ms=latency_ms,
+                        error=str(exc),
+                        retries=attempt,
+                        attempt_errors=attempt_errors,
+                    )
+                    raise
+                attempt_errors.append(str(exc))
+                policy.sleeper(policy.delay_for_attempt(attempt))
+                attempt += 1
 
     def stream_generate(self, prompt: str, **kwargs) -> Iterator[str]:
         started = time.perf_counter()
-        chunks = []
         call_id = f"L{len(self.trace.get('llm_calls', [])) + 1}" if self.trace else None
-        try:
-            for chunk in self.inner.stream_generate(prompt, **kwargs):
-                chunks.append(chunk)
-                yield chunk
-            latency_ms = _safe_round_ms(time.perf_counter() - started)
-            self._record_call(
-                call_id=call_id,
-                prompt=prompt,
-                response="".join(chunks),
-                kwargs=kwargs,
-                latency_ms=latency_ms,
-                error=None,
-            )
-        except Exception as exc:
-            latency_ms = _safe_round_ms(time.perf_counter() - started)
-            self._record_call(
-                call_id=call_id,
-                prompt=prompt,
-                response="".join(chunks),
-                kwargs=kwargs,
-                latency_ms=latency_ms,
-                error=str(exc),
-            )
-            raise
+        policy = self.retry_policy
+        attempt = 0
+        attempt_errors: list[str] = []
+        while True:
+            chunks = []
+            try:
+                for chunk in self.inner.stream_generate(prompt, **kwargs):
+                    chunks.append(chunk)
+                    yield chunk
+                latency_ms = _safe_round_ms(time.perf_counter() - started)
+                self._record_call(
+                    call_id=call_id,
+                    prompt=prompt,
+                    response="".join(chunks),
+                    kwargs=kwargs,
+                    latency_ms=latency_ms,
+                    error=None,
+                    retries=attempt,
+                    attempt_errors=attempt_errors,
+                )
+                return
+            except Exception as exc:
+                # Once chunks reached the consumer a retry would duplicate
+                # output, so only zero-chunk failures are retried.
+                retryable = (
+                    not chunks
+                    and policy is not None
+                    and attempt < policy.max_retries
+                    and is_transient(exc)
+                )
+                if not retryable:
+                    latency_ms = _safe_round_ms(time.perf_counter() - started)
+                    self._record_call(
+                        call_id=call_id,
+                        prompt=prompt,
+                        response="".join(chunks),
+                        kwargs=kwargs,
+                        latency_ms=latency_ms,
+                        error=str(exc),
+                        retries=attempt,
+                        attempt_errors=attempt_errors,
+                    )
+                    raise
+                attempt_errors.append(str(exc))
+                policy.sleeper(policy.delay_for_attempt(attempt))
+                attempt += 1
 
     def _record_call(
         self,
@@ -705,6 +802,8 @@ class InstrumentedLLM(BaseLLM):
         kwargs: Dict[str, Any],
         latency_ms: int,
         error: str | None,
+        retries: int = 0,
+        attempt_errors: Optional[list[str]] = None,
     ) -> None:
         if not self.trace:
             return
@@ -721,6 +820,8 @@ class InstrumentedLLM(BaseLLM):
             "prompt_preview": prompt[:160].replace("\n", " "),
             "response_preview": response[:240].replace("\n", " "),
             "usage": getattr(self.inner, "last_usage", None),
+            "retries": retries,
+            "attempt_errors": list(attempt_errors or []),
             "error": error,
             "timestamp": utc_now_iso(),
         }
@@ -729,6 +830,8 @@ class InstrumentedLLM(BaseLLM):
             {
                 "call_id": call_id,
                 "model": self.model,
+                # Normalized hash (CURRENT_TIME stripped) — replay matching only.
+                "prompt_hash": replay_prompt_hash(prompt),
                 "response": response,
                 "error": error,
             }

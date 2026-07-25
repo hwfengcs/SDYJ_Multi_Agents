@@ -12,7 +12,6 @@ from ..tools.tavily_search import TavilySearch
 from ..tools.arxiv_search import ArxivSearch
 from ..tools.mcp_client import MCPClient
 from ..llm.base import BaseLLM
-from ..prompts.loader import PromptLoader
 from ..utils.evidence import merge_evidence_items, normalize_search_batch
 from ..utils.tracing import record_tool_call
 
@@ -26,7 +25,6 @@ class Researcher:
     - Search from multiple data sources
     - Filter and organize search results
     - Aggregate results from different sources
-    - Extract relevant information
     """
 
     def __init__(
@@ -49,7 +47,6 @@ class Researcher:
         self.tavily = TavilySearch(tavily_api_key) if tavily_api_key else None
         self.arxiv = ArxivSearch()
         self.mcp = MCPClient(mcp_server_url, mcp_api_key) if mcp_server_url else None
-        self.prompt_loader = PromptLoader()
 
     def execute_task(self, state: ResearchState, task: SubTask) -> ResearchState:
         """
@@ -182,61 +179,6 @@ class Researcher:
                 for source, source_results in by_source.items()
             }
         }
-
-    def extract_relevant_info(self, state: ResearchState) -> str:
-        """
-        Extract relevant information from all research results.
-
-        Args:
-            state: Current research state
-
-        Returns:
-            Extracted and summarized information
-        """
-        results = state.get('research_results', [])
-
-        if not results:
-            return "No research results available."
-
-        # Compile all search results
-        all_items = []
-        for result in results:
-            for item in result.get('results', []):
-                all_items.append({
-                    'source': result.get('source'),
-                    'query': result.get('query'),
-                    'title': item.get('title'),
-                    'snippet': item.get('snippet'),
-                    'url': item.get('url')
-                })
-
-        # Use LLM to extract and summarize
-        prompt = self.prompt_loader.load(
-            'researcher_extract_info',
-            query=state['query'],
-            search_results=self._format_results_for_prompt(all_items[:20])  # Limit to top 20 results
-        )
-
-        summary = self.llm.generate(prompt, temperature=0.5)
-        return summary
-
-    def _format_results_for_prompt(self, items: List[Dict]) -> str:
-        """
-        Format search results for LLM prompt.
-
-        Args:
-            items: List of search result items
-
-        Returns:
-            Formatted string
-        """
-        formatted = []
-        for i, item in enumerate(items, 1):
-            formatted.append(f"\n{i}. [{item.get('source')}] {item.get('title', 'No title')}")
-            formatted.append(f"   URL: {item.get('url', 'N/A')}")
-            formatted.append(f"   {item.get('snippet', 'No snippet')[:200]}...")
-
-        return '\n'.join(formatted)
 
     def __repr__(self) -> str:
         """String representation."""
